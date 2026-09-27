@@ -5953,19 +5953,49 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val slotFilamentTypes = extruderPresets.value
                         .sortedBy { it.index }
                         .map { it.materialType.takeIf { type -> type.isNotBlank() } ?: "PLA" }
-                    cfg.copy(
-                        extruderCount = effectiveExtruderCount,
-                        wipeTowerEnabled = ov.resolvePrimeTower(effectiveExtruderCount, cfg.wipeTowerEnabled),
-                        mixedFilamentDefinitions = mixedFilamentDefinitions,
-                        filamentTypes = Array(effectiveExtruderCount) { idx ->
-                            slotFilamentTypes.getOrNull(idx) ?: cfg.filamentType.takeIf { it.isNotBlank() } ?: "PLA"
-                        },
-                        extruderTemps = computeFreshSlotTemps(
+                    // A1 Mini / Bambu single-STL fix: the Prepare material chip is a
+                    // file-index override, not a physical-slot preset.  The old code
+                    // built SliceConfig.filamentTypes exclusively from slot presets,
+                    // so packaging could still advertise PLA even after the G-code
+                    // header had correctly been patched to PETG (B117).
+                    val singleFileMaterialOverride = if (_canonicalFilamentList.value == null) {
+                        _filamentOverrides.value[0]?.materialType
+                    } else {
+                        null
+                    }
+                    val resolvedSlotFilamentTypes = slotFilamentTypes.toMutableList().also { types ->
+                        if (singleFileMaterialOverride != null) {
+                            if (types.isEmpty()) types.add(singleFileMaterialOverride)
+                            else types[0] = singleFileMaterialOverride
+                        }
+                    }
+                    val resolvedSlotTemps = computeFreshSlotTemps(
                         slotCount = effectiveExtruderCount,
                         usedSlots = toolRemapSlots,
                         presets = extruderPresets.value,
                         filaments = filaments.value
-                    ))
+                    ).also { temps ->
+                        if (singleFileMaterialOverride != null && temps.isNotEmpty()) {
+                            temps[0] = nozzleTempDefaultForMaterial(singleFileMaterialOverride)
+                        }
+                    }
+                    cfg.copy(
+                        extruderCount = effectiveExtruderCount,
+                        wipeTowerEnabled = ov.resolvePrimeTower(effectiveExtruderCount, cfg.wipeTowerEnabled),
+                        mixedFilamentDefinitions = mixedFilamentDefinitions,
+                        filamentType = singleFileMaterialOverride
+                            ?: cfg.filamentType.takeIf { it.isNotBlank() }
+                            ?: "PLA",
+                        nozzleTemp = singleFileMaterialOverride
+                            ?.let(::nozzleTempDefaultForMaterial)
+                            ?: cfg.nozzleTemp,
+                        filamentTypes = Array(effectiveExtruderCount) { idx ->
+                            resolvedSlotFilamentTypes.getOrNull(idx)
+                                ?: singleFileMaterialOverride
+                                ?: cfg.filamentType.takeIf { it.isNotBlank() }
+                                ?: "PLA"
+                        },
+                        extruderTemps = resolvedSlotTemps)
                 }
                 val targetAwareSliceConfig = resolveTargetedSliceConfig(
                     target = target,
