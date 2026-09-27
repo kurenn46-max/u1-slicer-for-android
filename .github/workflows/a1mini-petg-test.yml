@@ -39,6 +39,7 @@ jobs:
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
           AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)"
           "$APKSIGNER" verify --verbose --print-certs "$APK"
+          "$APKSIGNER" verify --verbose --min-sdk-version 35 "$APK"
           "$AAPT" dump badging "$APK" | head -30
           unzip -l "$APK" | grep 'lib/.*\.so' | head -50
       - name: Upload APK artifact
