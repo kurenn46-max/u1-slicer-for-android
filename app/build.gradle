@@ -9,11 +9,11 @@ android {
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.u1.slicer.orca"
+        applicationId "com.u1.slicer.orca.petgtest"
         minSdk 26
         targetSdk 34
         versionCode 401
-        versionName "4.0.1"
+        versionName "4.0.1-petgtest"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
