@@ -41,6 +41,12 @@ jobs:
           "$APKSIGNER" verify --verbose --print-certs "$APK"
           "$APKSIGNER" verify --verbose --min-sdk-version 35 "$APK"
           ZIPALIGN="$(find "$ANDROID_HOME/build-tools" -name zipalign -type f | sort -V | tail -1)"
+          # Re-align APK for Android 15/16 16 KB page-size devices, then re-sign.
+          cp "$APK" /tmp/app-unaligned.apk
+          "$ZIPALIGN" -f -P 16 4 /tmp/app-unaligned.apk /tmp/app-16k.apk
+          mv /tmp/app-16k.apk "$APK"
+          "$APKSIGNER" sign --ks "$HOME/.android/debug.keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android "$APK"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
           "$ZIPALIGN" -c -P 16 -v 4 "$APK"
           rm -rf /tmp/apk-libs && mkdir -p /tmp/apk-libs
           unzip -q "$APK" 'lib/arm64-v8a/*.so' -d /tmp/apk-libs
