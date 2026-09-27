@@ -24,6 +24,10 @@ jobs:
         run: chmod +x gradlew
       - name: Run JVM tests (non-blocking for test APK)
         run: ./gradlew testDebugUnitTest --no-daemon || true
+      - name: Create debug keystore
+        run: |
+          mkdir -p "$HOME/.android"
+          keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
       - name: Upload APK
