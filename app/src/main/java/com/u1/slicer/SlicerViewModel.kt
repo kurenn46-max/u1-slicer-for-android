@@ -6387,7 +6387,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     _state.value = SlicerState.SliceComplete(result)
                     // Save job to history. Copy source model to durable storage so it can be
                     // re-opened from the Jobs tab even after the transient workspace is cleared.
-                    val cfg = _config.value
+                    // Persist the exact effective slice config, not the stale UI base config.
+                    // This is critical for single-STL material overrides (e.g. PETG 235C).
+                    val cfg = targetAwareSliceConfig
                     val jobId = sliceJobDao.insert(
                         SliceJob(
                             modelName = currentModelName.ifEmpty { "Unknown" },
