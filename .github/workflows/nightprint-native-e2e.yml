@@ -60,10 +60,16 @@ jobs:
             adb shell getprop ro.dalvik.vm.native.bridge >> nightprint-e2e-ci/device-abi.txt
             bash ./gradlew --no-daemon :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.u1.slicer.slicing.NightPrintNativeE2ETest
             result=$?
-            adb logcat -d -s NIGHTPRINT_E2E:I AndroidRuntime:E '*:S' > nightprint-e2e-ci/native-android-logcat.txt
-            adb shell run-as com.u1.slicer.orca.genesis.qa3 cat /sdcard/Android/data/com.u1.slicer.orca.genesis.qa3/files/nightprint-native-e2e-report.json \
-              > nightprint-e2e-ci/native-slice-evidence.json || true
-            echo "instrumentation exit=$result"
+            adb logcat -d -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I AndroidRuntime:E '*:S' > nightprint-e2e-ci/native-android-logcat.txt
+            DEVICE_REPORT_DIR=/sdcard/Android/data/com.u1.slicer.orca.genesis.qa3/files
+            adb pull "$DEVICE_REPORT_DIR/nightprint-native-e2e-report.json" nightprint-e2e-ci/raw-stl-native-evidence.json || true
+            adb pull "$DEVICE_REPORT_DIR/nightprint-3mf-profile-e2e-report.json" nightprint-e2e-ci/embedded-3mf-native-evidence.json || true
+            # A Gradle 'green' must not mean the tests were absent/skipped.
+            if [ "$result" -eq 0 ]; then
+              test -s nightprint-e2e-ci/raw-stl-native-evidence.json || result=1
+              test -s nightprint-e2e-ci/embedded-3mf-native-evidence.json || result=1
+            fi
+            echo "instrumentation and evidence exit=$result"
             exit "$result"
       - name: Upload native instrumentation results (including failed runs)
         if: always()
