@@ -2214,6 +2214,18 @@ fun PrepareScreen(
                                 viewModel.effectiveSliceTarget.value,
                                 config,
                             )
+                            // The displayed bed dimensions are derived from the SAME target
+                            // resolver used by the slicer, not the connected printer camera.
+                            val profileTarget = viewModel.effectiveSliceTarget.value
+                            val profileName = if (profileTarget == SlicerTarget.BambuA1Mini)
+                                "Bambu Lab A1 mini" else profileTarget.toString()
+                            Text(
+                                "Slicing machine: $profileName  |  Bed: " +
+                                    "${targetMachineConfig.bedSizeX.toInt()} × " +
+                                    "${targetMachineConfig.bedSizeY.toInt()} mm",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                             InlineModelPreview(
                                 modelFilePath = modelPath,
                                 modelTriangleCount = loadedInfo?.triangleCount ?: 0,
