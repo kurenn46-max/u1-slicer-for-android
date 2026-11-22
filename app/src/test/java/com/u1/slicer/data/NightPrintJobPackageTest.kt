@@ -42,12 +42,29 @@ class NightPrintJobPackageTest {
         return buf.toByteArray()
     }
 
+    private fun valid3mf(): ByteArray = archive(
+        "[Content_Types].xml" to (
+            """<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">""" +
+            """<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>""" +
+            """</Types>"""
+        ).toByteArray(),
+        "3D/3dmodel.model" to (
+            """<?xml version="1.0" encoding="UTF-8"?>""" +
+            """<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">""" +
+            """<resources><object id="1" type="model"><mesh><vertices>""" +
+            """<vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/>""" +
+            """<vertex x="0" y="10" z="0"/></vertices><triangles>""" +
+            """<triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources>""" +
+            """<build><item objectid="1"/></build></model>"""
+        ).toByteArray()
+    )
+
     @Test fun importsJobAndPrintSettingsWithoutGcode() {
         val outputDir = Files.createTempDirectory("nightprintjob").toFile()
         try {
             val bytes = archive(
                 "settings.txt" to sample.toByteArray(),
-                "model.3mf" to byteArrayOf(0x50, 0x4B, 0x03, 0x04),
+                "model.3mf" to valid3mf(),
             )
             val job = NightPrintJobPackage.unpack(ByteArrayInputStream(bytes), outputDir)
             assertEquals("TPU", job.preset.material)
@@ -55,6 +72,17 @@ class NightPrintJobPackageTest {
             assertTrue(job.model.name.endsWith(".3mf"))
             assertEquals(64, job.sha256.length)
         } finally { outputDir.deleteRecursively() }
+    }
+
+    @Test fun rejectsFakeZipEvenWithPkHeader() {
+        reject(archive("settings.txt" to sample.toByteArray(),
+            "model.3mf" to byteArrayOf(0x50, 0x4B, 0x03, 0x04)))
+    }
+
+    @Test fun rejectsNested3mfWithoutRealModelPart() {
+        val fake = archive("[Content_Types].xml" to "<Types/>".toByteArray(),
+            "random.txt" to "not a 3MF model".toByteArray())
+        reject(archive("settings.txt" to sample.toByteArray(), "model.3mf" to fake))
     }
 
     @Test fun rejectsPathTraversal() {
