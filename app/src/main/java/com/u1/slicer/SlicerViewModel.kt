@@ -94,6 +94,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.security.MessageDigest
 import java.util.zip.ZipFile
@@ -4693,6 +4694,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 // Keep the existing profile library intact. All writes remain local.
                 printersRepo.update(printer.copy(extruderPresets = nextPresets.sortedBy { it.index }))
+                // Await the active-slot flow before allowing immediate auto-slice.
+                withTimeout(3_000L) {
+                    extruderPresets.first { slots ->
+                        slots.any { it.index == 0 && it.materialType == preset.material }
+                    }
+                }
                 settingsRepo.saveSliceConfig(newConfig)
                 settingsRepo.saveSlicingOverrides(newOverrides)
                 _config.value = newConfig
