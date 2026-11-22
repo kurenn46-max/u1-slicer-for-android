@@ -300,18 +300,18 @@ class NightPrintNativeE2ETest {
             "Only the startup-heat consent gate may require review: ${initial.errors}",
             initial.passed || NightPrintGcodeAudit.canRequestStartupHeatApproval(initial)
         )
-        val final = NightPrintGcodeAudit.inspect(out, "TPU", 225, 50,
+        val finalAudit = NightPrintGcodeAudit.inspect(out, "TPU", 225, 50,
             startupHeatApproved = true)
-        assertTrue("Profile-embedded 3MF G-code did not pass safety audit: ${final.errors}",
-            final.passed)
+        assertTrue("Profile-embedded 3MF G-code did not pass safety audit: ${finalAudit.errors}",
+            finalAudit.passed)
         val report = JSONObject().apply {
             put("fixture", "synthetic_geometry_only_3mf_in_npjob")
             put("path", "nightprint_profile_embed_then_real_native_slice")
-            put("printer", final.printerModel)
-            put("material", final.recognizedMaterials.joinToString(","))
+            put("printer", finalAudit.printerModel)
+            put("material", finalAudit.recognizedMaterials.joinToString(","))
             put("gcode_bytes", out.length())
-            put("startup_peak_c", final.startupNozzlePeakC ?: -1)
-            put("audit_passed", final.passed)
+            put("startup_peak_c", finalAudit.startupNozzlePeakC ?: -1)
+            put("audit_passed", finalAudit.passed)
             put("result", "PASS")
         }.toString(2)
         File(
