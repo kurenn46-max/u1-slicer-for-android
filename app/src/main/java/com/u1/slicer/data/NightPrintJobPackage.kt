@@ -7,6 +7,7 @@ import java.io.InputStream
 import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipFile
+import java.util.zip.ZipException
 
 /**
  * NIGHT PRINT job exchange format: a ZIP containing exactly
@@ -90,7 +91,8 @@ object NightPrintJobPackage {
             // Validate the NESTED 3MF as an actual archive, not merely a "PK" header.
             // The native importer still checks geometry and slice compatibility.
             if (modelName == "model.3mf") {
-                ZipFile(modelFile).use { nested ->
+                try {
+                    ZipFile(modelFile).use { nested ->
                     val parts = nested.entries().toList()
                     require(parts.size in 2..500) { "3MF entry count is invalid" }
                     require(parts.any { it.name == "[Content_Types].xml" }) {
@@ -104,6 +106,9 @@ object NightPrintJobPackage {
                     }
                     val expandedSize = parts.sumOf { if (it.size < 0) 250_000_001L else it.size }
                     require(expandedSize <= 250_000_000L) { "3MF expands beyond safety limit" }
+                    }
+                } catch (e: ZipException) {
+                    throw IllegalArgumentException("Invalid inner 3MF ZIP archive", e)
                 }
             }
             val digest = MessageDigest.getInstance("SHA-256")
