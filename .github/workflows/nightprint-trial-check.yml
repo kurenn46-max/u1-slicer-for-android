@@ -37,7 +37,7 @@ jobs:
           fi
       - uses: gradle/actions/setup-gradle@v4
       - name: JVM regression tests and debug APK build (no printer connection)
-        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+        run: bash ./gradlew --no-daemon testDebugUnitTest assembleDebug
       - name: Keep debug APK for private testing
         if: success()
         uses: actions/upload-artifact@v4
