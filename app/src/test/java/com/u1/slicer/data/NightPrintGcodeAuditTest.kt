@@ -48,5 +48,14 @@ class NightPrintGcodeAuditTest {
         assertFalse(audit(valid.replace("M140 S50", "M140 S60")).passed)
     @Test fun rejectsMissingMaterialIdentity() =
         assertFalse(audit(valid.replace("M1002 set_filament_type:TPU", "").replace("; filament_type = TPU", "")).passed)
+    @Test fun rejectsHiddenHotendOverTemperatureEvenWhenExpectedCommandExists() {
+        assertFalse(audit(valid + "\nM104 S270").passed)
+    }
+    @Test fun rejectsHiddenBedOverTemperatureEvenWhenExpectedCommandExists() {
+        assertFalse(audit(valid + "\nM140 S90").passed)
+    }
+    @Test fun allowsLowerStartupNozzleTemperature() =
+        assertTrue(audit(valid.replace("M109 S140", "M109 S150")).passed)
+
     @Test fun rejectsEmptyGcode() = assertFalse(audit("").passed)
 }
