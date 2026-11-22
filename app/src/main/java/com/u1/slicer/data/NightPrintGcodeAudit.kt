@@ -54,8 +54,10 @@ object NightPrintGcodeAudit {
         val materialMeta = Regex("^\\s*;\\s*filament_type\\s*=\\s*(.*)", RegexOption.IGNORE_CASE)
         val machineMeta = Regex("^\\s*;\\s*printer_model\\s*=\\s*(.+)", RegexOption.IGNORE_CASE)
         val nozzleMeta = Regex("^\\s*;\\s*nozzle_temperature_initial_layer\\s*=\\s*(\\d+)", RegexOption.IGNORE_CASE)
-        val bedCommand = Regex("^\\s*M1(?:40|90)\\s+S(\\d+)(?:\\s|;|$)", RegexOption.IGNORE_CASE)
-        val nozzleCommand = Regex("^\\s*M1(?:04|09)\\s+S(\\d+)(?:\\s|;|$)", RegexOption.IGNORE_CASE)
+        // S/R temperature parameters may follow a tool or heater selector (e.g. M104 T0 S250).
+        // Reject unknown temperature syntax instead of silently overlooking a hotend command.
+        val temperatureCommand = Regex("^\\s*M(104|109|140|190)(?!\\d)", RegexOption.IGNORE_CASE)
+        val temperatureParam = Regex("(?:^|\\s)([SR])(-?\\d+(?:\\.\\d+)?)(?=\\s|$)", RegexOption.IGNORE_CASE)
         val layerMarker = Regex("^;\\s*LAYER_CHANGE\\s*$", RegexOption.IGNORE_CASE)
 
         file.useLines { lines ->
@@ -71,13 +73,28 @@ object NightPrintGcodeAudit {
                 }
                 machineMeta.find(line)?.groupValues?.get(1)?.trim()?.let(machineTags::add)
                 nozzleMeta.find(line)?.groupValues?.get(1)?.toIntOrNull()?.let(initialNozzleTags::add)
-                bedCommand.find(line)?.groupValues?.get(1)?.toIntOrNull()?.let {
-                    if (it != 0) beds.add(it)
-                }
-                nozzleCommand.find(line)?.groupValues?.get(1)?.toIntOrNull()?.let {
-                    if (it == nozzleC) expectedNozzleCommandFound = true
-                    if (it > 0) {
-                        if (layerStarted) layerNozzles.add(it) else startupNozzles.add(it)
+                val executable = line.substringBefore(';').trim()
+                temperatureCommand.find(executable)?.let { command ->
+                    val parameters = executable.substring(command.range.last + 1)
+                    val targets = temperatureParam.findAll(parameters).toList()
+                    val type = command.groupValues[1]
+                    val target = targets.singleOrNull()?.groupValues?.get(2)?.toDoubleOrNull()
+                    if (target == null || !target.isFinite() || target < 0.0 ||
+                        target > 500.0 || target % 1.0 != 0.0 ||
+                        (targets.singleOrNull()?.groupValues?.get(1)?.uppercase() == "R" &&
+                            type != "109" && type != "190")
+                    ) {
+                        errors.add("Unrecognized or unsafe temperature command: " + executable.take(120))
+                    } else {
+                        val celsius = target.toInt()
+                        if (type == "140" || type == "190") {
+                            if (celsius != 0) beds.add(celsius)
+                        } else {
+                            if (celsius == nozzleC) expectedNozzleCommandFound = true
+                            if (celsius > 0) {
+                                if (layerStarted) layerNozzles.add(celsius) else startupNozzles.add(celsius)
+                            }
+                        }
                     }
                 }
             }
