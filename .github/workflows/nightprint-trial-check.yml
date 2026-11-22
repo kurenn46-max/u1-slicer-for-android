@@ -23,6 +23,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+          fetch-depth: 0
+      - name: Refuse stale native binary when C++ sources change
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE_SHA" ]; then BASE_SHA=$(git merge-base HEAD origin/main); fi
+          NATIVE_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- app/src/main/cpp/src/)
+          BINARY_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so)
+          if [ -n "$NATIVE_CHANGED" ] && [ -z "$BINARY_CHANGED" ]; then
+            echo "::error::C++ native sources changed but the bundled arm64 libprusaslicer-jni.so was not rebuilt."
+            echo "Rebuild against the pinned engine, verify alignment/ABI, and commit the exact new .so."
+            echo "Changed sources: $NATIVE_CHANGED"
+            exit 1
+          fi
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
