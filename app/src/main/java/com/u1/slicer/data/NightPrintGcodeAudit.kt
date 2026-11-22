@@ -24,6 +24,12 @@ object NightPrintGcodeAudit {
         val layerNozzlePeakC: Int? = null
     )
 
+    /** Never offer an override when there is any fault besides the single consent gate. */
+    fun canRequestStartupHeatApproval(report: Report): Boolean =
+        !report.passed && report.requiresStartupHeatApproval &&
+            report.startupNozzlePeakC != null &&
+            report.errors == listOf("Startup elevated nozzle temperature requires explicit approval")
+
     fun inspect(
         file: File,
         expectedMaterial: String,
