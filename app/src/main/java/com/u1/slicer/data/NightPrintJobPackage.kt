@@ -83,16 +83,19 @@ object NightPrintJobPackage {
             require(entries == 2 && model != null && settings != null) {
                 "Package requires one model and settings.txt"
             }
-            val preset = NightPrintCode.parse(settings)
+            val modelFile = model ?: throw IllegalArgumentException("Missing model")
+            val code = settings ?: throw IllegalArgumentException("Missing settings")
+            val preset = NightPrintCode.parse(code)
             // Minimum format check; the native 3MF/STL importer performs full mesh validation.
             if (modelName == "model.3mf") {
-                val bytes = model.inputStream().use { it.readNBytes(4) }
-                require(bytes.size == 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte()) {
+                val bytes = ByteArray(4)
+                val read = modelFile.inputStream().use { it.read(bytes) }
+                require(read == 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte()) {
                     "model.3mf is not a ZIP/3MF file"
                 }
             }
             val digest = MessageDigest.getInstance("SHA-256")
-            model.inputStream().use { stream ->
+            modelFile.inputStream().use { stream ->
                 val buffer = ByteArray(8192)
                 while (true) {
                     val n = stream.read(buffer)
@@ -100,7 +103,7 @@ object NightPrintJobPackage {
                     digest.update(buffer, 0, n)
                 }
             }
-            return Job(model, preset, settings, digest.digest().joinToString("") { "%02x".format(it) })
+            return Job(modelFile, preset, code, digest.digest().joinToString("") { "%02x".format(it) })
         } catch (t: Throwable) {
             model?.delete()
             throw t
