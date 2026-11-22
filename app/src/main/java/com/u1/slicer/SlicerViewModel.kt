@@ -5606,6 +5606,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun cancelSlicing() {
         if (_state.value is SlicerState.Slicing) {
+            pendingNightPrintHeatDecision?.complete(false)
             _state.value = SlicerState.Cancelling
             viewModelScope.launch(Dispatchers.IO) {
                 native.cancelSlice()
@@ -5615,6 +5616,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun startSlicing() {
+        // Never replace an output file while its manual safety review is pending.
+        if (pendingNightPrintHeatDecision != null) return
         if (!com.u1.slicer.slice.isLocalSliceAvailable(
                 activePrinter = activePrinterForSlicing.value,
             )
