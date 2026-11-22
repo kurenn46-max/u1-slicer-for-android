@@ -51,9 +51,9 @@ object NightPrintGcodeAudit {
         var layerStarted = false
 
         val materialCommand = Regex("^\\s*M1002\\s+set_filament_type:([A-Za-z0-9_]+)", RegexOption.IGNORE_CASE)
-        val materialMeta = Regex("^;\\s*filament_type\\s*=\\s*(.*)", RegexOption.IGNORE_CASE)
-        val machineMeta = Regex("^;\\s*printer_model\\s*=\\s*(.+)", RegexOption.IGNORE_CASE)
-        val nozzleMeta = Regex("^;\\s*nozzle_temperature_initial_layer\\s*=\\s*(\\d+)", RegexOption.IGNORE_CASE)
+        val materialMeta = Regex("^\\s*;\\s*filament_type\\s*=\\s*(.*)", RegexOption.IGNORE_CASE)
+        val machineMeta = Regex("^\\s*;\\s*printer_model\\s*=\\s*(.+)", RegexOption.IGNORE_CASE)
+        val nozzleMeta = Regex("^\\s*;\\s*nozzle_temperature_initial_layer\\s*=\\s*(\\d+)", RegexOption.IGNORE_CASE)
         val bedCommand = Regex("^\\s*M1(?:40|90)\\s+S(\\d+)(?:\\s|;|$)", RegexOption.IGNORE_CASE)
         val nozzleCommand = Regex("^\\s*M1(?:04|09)\\s+S(\\d+)(?:\\s|;|$)", RegexOption.IGNORE_CASE)
         val layerMarker = Regex("^;\\s*LAYER_CHANGE\\s*$", RegexOption.IGNORE_CASE)
