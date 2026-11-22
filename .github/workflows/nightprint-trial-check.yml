@@ -1,9 +1,6 @@
 name: NIGHT PRINT release-gate tests
 
 on:
-  push:
-    branches:
-      - feature/nightprint-code-import-v1-20261122
   pull_request:
     paths:
       - 'app/**'
