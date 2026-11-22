@@ -60,9 +60,9 @@ object NightPrintJobPackage {
                         val target = File.createTempFile("nightprint_job_", suffix, workingDir)
                         model = target
                         modelName = name
+                        var count = 0L
                         target.outputStream().use { out ->
                             val buffer = ByteArray(8192)
-                            var count = 0L
                             while (true) {
                                 val n = zip.read(buffer)
                                 if (n < 0) break
