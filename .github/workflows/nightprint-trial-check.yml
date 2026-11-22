@@ -1,0 +1,40 @@
+name: NIGHT PRINT trial checks
+
+on:
+  push:
+    branches:
+      - feature/nightprint-code-import-v1-20261122
+  pull_request:
+    paths:
+      - 'app/src/main/java/com/u1/slicer/data/NightPrint*.kt'
+      - 'app/src/test/java/com/u1/slicer/data/NightPrint*.kt'
+      - 'app/src/main/java/com/u1/slicer/ui/SettingsScreen.kt'
+      - 'app/src/main/java/com/u1/slicer/SlicerViewModel.kt'
+      - '.github/workflows/nightprint-trial-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  android-unit-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: JVM regression tests and debug APK build (no printer connection)
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+      - name: Keep debug APK for private testing
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: night-print-trial-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 7
