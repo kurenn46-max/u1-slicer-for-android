@@ -2722,6 +2722,7 @@ fun PreviewScreen(
     onResetPreviewCamera: (() -> Unit)? = null
 ) {
     val state by viewModel.state.collectAsState()
+    val heatReview by viewModel.nightPrintHeatReview.collectAsState()
     val context = LocalContext.current
     val parsedGcode by viewModel.parsedGcode.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
@@ -2748,6 +2749,35 @@ fun PreviewScreen(
     // B142b: mix slices use physical-slot tool space — palette/summary must follow.
     val sliceMixToolSpace by viewModel.sliceMixToolSpace.collectAsState()
     val slotPaletteWithMixBlends by viewModel.slotPaletteWithMixBlends.collectAsState()
+
+    // Approval is only for the current generated file; no permission is persisted.
+    val review = heatReview
+    if (review != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.respondNightPrintHeatReview(false) },
+            title = { Text("NIGHT PRINT - 開始温度の確認") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("材料: ${review.material}")
+                    Text("通常の印刷温度: ${review.printNozzleC}℃")
+                    Text("開始準備中の最高温度: ${review.startupPeakC}℃")
+                    Text("ベッド設定: ${review.bedC}℃")
+                    Text("実際のフィラメントの許容温度を確認してください。別の材料・機種・温度異常は承認後も拒否されます。")
+                    Text("承認はこのG-codeの再監査だけです。プリンターへの送信や印刷開始は行いません。")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.respondNightPrintHeatReview(false) }) {
+                    Text("承認せず中止")
+                }
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.respondNightPrintHeatReview(true) }) {
+                    Text("温度を確認して承認")
+                }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
