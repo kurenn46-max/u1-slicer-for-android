@@ -58,8 +58,8 @@ jobs:
           AAPT="$ANDROID_HOME/build-tools/34.0.0/aapt"
           APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner"
           BADGING=$("$AAPT" dump badging "$APK")
-          echo "$BADGING" | grep -Fq "package: name='com.u1.slicer.orca.genesis.qa2'"
-          echo "$BADGING" | grep -Fq "application-label:'NIGHT PRINT GENESIS QA2'"
+          echo "$BADGING" | grep -Fq "package: name='com.u1.slicer.orca.genesis.qa3'"
+          echo "$BADGING" | grep -Fq "application-label:'NIGHT PRINT GENESIS QA3'"
           "$APKSIGNER" verify --verbose "$APK"
           unzip -Z1 "$APK" | grep -Fxq 'lib/arm64-v8a/libprusaslicer-jni.so'
           echo "### NIGHT PRINT GENESIS automated gate" >> "$GITHUB_STEP_SUMMARY"
