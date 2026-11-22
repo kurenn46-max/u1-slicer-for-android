@@ -58,8 +58,7 @@ jobs:
             mkdir -p nightprint-e2e-ci
             adb shell getprop ro.product.cpu.abilist > nightprint-e2e-ci/device-abi.txt
             adb shell getprop ro.dalvik.vm.native.bridge >> nightprint-e2e-ci/device-abi.txt
-            bash ./gradlew --no-daemon :app:connectedDebugAndroidTest \
-              -Pandroid.testInstrumentationRunnerArguments.class=com.u1.slicer.slicing.NightPrintNativeE2ETest
+            bash ./gradlew --no-daemon :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.u1.slicer.slicing.NightPrintNativeE2ETest
             result=$?
             adb logcat -d -s NIGHTPRINT_E2E:I AndroidRuntime:E '*:S' > nightprint-e2e-ci/native-android-logcat.txt
             adb shell run-as com.u1.slicer.orca.genesis.qa3 cat /sdcard/Android/data/com.u1.slicer.orca.genesis.qa3/files/nightprint-native-e2e-report.json \
