@@ -52,10 +52,10 @@ object NightPrintCode {
         }
         fun integer(name: String, low: Int, high: Int): Int =
             fields.getValue(name).toIntOrNull()?.takeIf { it in low..high }
-                ?: error("$name must be $low..$high")
+                ?: throw IllegalArgumentException("$name must be $low..$high")
         fun decimal(name: String, low: Float, high: Float): Float =
             fields.getValue(name).toFloatOrNull()?.takeIf { it.isFinite() && it in low..high }
-                ?: error("$name must be $low..$high")
+                ?: throw IllegalArgumentException("$name must be $low..$high")
 
         val printer = fields.getValue("printer")
         require(printer == "BAMBU_A1_MINI") { "Only BAMBU_A1_MINI codes are supported" }
@@ -77,7 +77,7 @@ object NightPrintCode {
         val support = when (fields.getValue("support")) {
             "true" -> true
             "false" -> false
-            else -> error("support must be true or false")
+            else -> throw IllegalArgumentException("support must be true or false")
         }
         return Preset(
             printer, material, nozzle, bed, speed,
