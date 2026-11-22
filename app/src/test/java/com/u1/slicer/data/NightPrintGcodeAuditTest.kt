@@ -81,6 +81,32 @@ class NightPrintGcodeAuditTest {
         assertEquals(250, approved.startupNozzlePeakC)
     }
 
+    @Test fun permitsHeatDialogOnlyForConsentAlone() {
+        val purge = valid.replace(";LAYER_CHANGE", "M104 S250\n;LAYER_CHANGE")
+        val pending = audit(purge)
+        assertTrue(NightPrintGcodeAudit.canRequestStartupHeatApproval(pending))
+        val approved = NightPrintGcodeAudit.inspect(
+            temp(purge), "TPU", 225, 50, startupHeatApproved = true
+        )
+        assertTrue(approved.passed)
+        assertFalse(NightPrintGcodeAudit.canRequestStartupHeatApproval(approved))
+    }
+
+    @Test fun neverOffersHeatApprovalForMaterialOrMachineMismatch() {
+        val purge = valid.replace(";LAYER_CHANGE", "M104 S250\n;LAYER_CHANGE")
+        assertFalse(NightPrintGcodeAudit.canRequestStartupHeatApproval(
+            audit(purge.replace("; filament_type = TPU", "; filament_type = PLA"))
+        ))
+        assertFalse(NightPrintGcodeAudit.canRequestStartupHeatApproval(
+            audit(purge.replace("Bambu Lab A1 mini", "Snapmaker U1"))
+        ))
+    }
+
+    @Test fun neverOffersHeatApprovalForPostLayerOverheat() {
+        val unsafe = valid.replace(";LAYER_CHANGE", "M104 S250\n;LAYER_CHANGE") + "\nM104 S250"
+        assertFalse(NightPrintGcodeAudit.canRequestStartupHeatApproval(audit(unsafe)))
+    }
+
     @Test fun acceptsToolSelectedNozzleTargetAndDecimalInteger() {
         val gcode = valid.replace("M104 S225", "M104 T0 S225.0")
         assertTrue(audit(gcode).passed)
