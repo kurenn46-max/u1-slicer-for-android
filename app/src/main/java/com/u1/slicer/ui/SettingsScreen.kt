@@ -710,23 +710,36 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall
                     )
-                    Button(
-                        enabled = !nightCodeApplying,
-                        onClick = {
-                            nightCodeApplying = true
-                            viewModel.applyNightPrintPreset(preset) { error ->
-                                nightCodeApplying = false
-                                if (error == null) {
-                                    verifiedNightCode = null
-                                    nightCodeError = null
-                                    nightCodeStatus = "Saved locally and synchronized the selected material slot. Audit the new G-code before printing."
+                    val applyAndMaybeSlice: (Boolean) -> Unit = { autoSlice ->
+                        nightCodeApplying = true
+                        viewModel.applyNightPrintPreset(preset) { error ->
+                            nightCodeApplying = false
+                            if (error == null) {
+                                verifiedNightCode = null
+                                nightCodeError = null
+                                if (autoSlice) {
+                                    nightCodeStatus = "Slicing locally with safety audit; no printer commands sent."
+                                    viewModel.startSlicing()
+                                    onNavigatePreview()
                                 } else {
-                                    nightCodeError = error
-                                    nightCodeStatus = null
+                                    nightCodeStatus = "Saved and synchronized the selected material slot. Re-slice before printing."
                                 }
+                            } else {
+                                nightCodeError = error
+                                nightCodeStatus = null
                             }
                         }
-                    ) { Text(if (nightCodeApplying) "Applying..." else "Apply settings (no printing)") }
+                    }
+                    Button(
+                        enabled = !nightCodeApplying,
+                        onClick = { applyAndMaybeSlice(false) }
+                    ) { Text(if (nightCodeApplying) "Applying..." else "Apply settings only") }
+                    if (viewModel.modelInfo.value != null) {
+                        OutlinedButton(
+                            enabled = !nightCodeApplying,
+                            onClick = { applyAndMaybeSlice(true) }
+                        ) { Text("Apply + local slice + safety audit (NO PRINT)") }
+                    }
                 }
                 nightCodeStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
