@@ -40,6 +40,9 @@ android {
         }
         debug {
             minifyEnabled false
+            // Install experimental GENESIS alongside the stable NIGHT PRINT app.
+            applicationIdSuffix ".genesis"
+            versionNameSuffix "-GENESIS-ALPHA"
             signingConfig signingConfigs.debug
         }
     }
