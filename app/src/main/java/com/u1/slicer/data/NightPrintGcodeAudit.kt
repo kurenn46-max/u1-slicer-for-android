@@ -24,6 +24,7 @@ object NightPrintGcodeAudit {
         val machineTags = mutableSetOf<String>()
         val initialNozzleTags = mutableSetOf<Int>()
         val beds = mutableSetOf<Int>()
+        val nozzleCommands = mutableSetOf<Int>()
         var expectedNozzleCommandFound = false
         val materialCommand = Regex("^\\s*M1002\\s+set_filament_type:([A-Za-z0-9_]+)", RegexOption.IGNORE_CASE)
         val materialMeta = Regex("^;\\s*filament_type\\s*=\\s*(.*)", RegexOption.IGNORE_CASE)
@@ -48,6 +49,7 @@ object NightPrintGcodeAudit {
                 }
                 nozzleCommand.find(line)?.groupValues?.get(1)?.toIntOrNull()?.let {
                     if (it == nozzleC) expectedNozzleCommandFound = true
+                    if (it > 0) nozzleCommands.add(it)
                 }
             }
         }
@@ -62,8 +64,14 @@ object NightPrintGcodeAudit {
             errors.add("Initial nozzle mismatch/missing: expected $nozzleC C; found " + initialNozzleTags.sorted())
         }
         if (!expectedNozzleCommandFound) errors.add("No nozzle-temperature command found for $nozzleC C")
+        if (nozzleCommands.any { it > nozzleC }) {
+            errors.add("Unexpected nozzle temperature above $nozzleC C: " + nozzleCommands.sorted())
+        }
         if (bedC !in beds) errors.add("No heated-bed command found for $bedC C; found " + beds.sorted())
-        if (beds.any { it != bedC }) warnings.add("Other nonzero heated-bed temperature commands: " + beds.sorted())
+        if (beds.any { it > bedC }) {
+            errors.add("Unexpected bed temperature above $bedC C: " + beds.sorted())
+        }
+        if (beds.any { it < bedC }) warnings.add("Other lower bed temperature commands: " + beds.sorted())
         return Report(errors.isEmpty(), expectedMaterial, materials, machineTags.singleOrNull(),
             initialNozzleTags.singleOrNull(), beds, errors, warnings)
     }
