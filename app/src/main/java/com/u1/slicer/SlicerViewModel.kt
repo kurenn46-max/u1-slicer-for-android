@@ -4688,13 +4688,42 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 val nextPresets = printer.extruderPresets.toMutableList()
                 val slot0 = nextPresets.indexOfFirst { it.index == 0 }
+                // Job-local filament profile. Does not overwrite any of the user's
+                // existing PETG or TPU success profiles. The volume limit is
+                // conservative for this experimental TPU workflow.
+                val filamentRecipe = listOf(
+                    preset.material, preset.nozzleC, preset.bedC,
+                    preset.retractMm, preset.retractMmS
+                ).joinToString("|")
+                val recipeId = MessageDigest.getInstance("SHA-256")
+                    .digest(filamentRecipe.toByteArray(Charsets.UTF_8))
+                    .take(6).joinToString("") { "%02x".format(it) }
+                val profileName = "NIGHTPRINT A1mini " + preset.material + " " + recipeId
+                val profile = filamentDao.getByName(profileName)
+                val profileId = profile?.id ?: filamentDao.insert(
+                    FilamentProfile(
+                        name = profileName,
+                        material = preset.material,
+                        nozzleTemp = preset.nozzleC,
+                        bedTemp = preset.bedC,
+                        retractLength = preset.retractMm,
+                        retractSpeed = preset.retractMmS,
+                        nozzleTempInitialLayer = preset.nozzleC,
+                        bedTempInitialLayer = preset.bedC,
+                        color = nextPresets.firstOrNull { it.index == 0 }?.color ?: "#202020",
+                        maxVolumetricSpeed = if (preset.material == "TPU") 2.0f else null
+                    )
+                )
+                withTimeout(4_000L) {
+                    filaments.first { entries -> entries.any { it.id == profileId } }
+                }
                 val newSlot0 = if (slot0 < 0) {
-                    ExtruderPreset(index = 0, materialType = preset.material)
+                    ExtruderPreset(index = 0, materialType = preset.material, filamentProfileId = profileId)
                 } else {
                     nextPresets[slot0].copy(
                         materialType = preset.material,
-                        // Old linked PLA/PETG profile must not override new material.
-                        filamentProfileId = null
+                        // Link the exact recipe instead of inheriting a mismatched PLA profile.
+                        filamentProfileId = profileId
                     )
                 }
                 if (slot0 >= 0) nextPresets[slot0] = newSlot0 else nextPresets.add(newSlot0)
