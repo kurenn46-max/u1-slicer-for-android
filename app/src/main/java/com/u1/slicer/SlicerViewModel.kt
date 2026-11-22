@@ -4693,7 +4693,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // conservative for this experimental TPU workflow.
                 val filamentRecipe = listOf(
                     preset.material, preset.nozzleC, preset.bedC,
-                    preset.retractMm, preset.retractMmS
+                    preset.retractMm, preset.retractMmS, preset.colorHex ?: "unassigned"
                 ).joinToString("|")
                 val recipeId = MessageDigest.getInstance("SHA-256")
                     .digest(filamentRecipe.toByteArray(Charsets.UTF_8))
@@ -4710,7 +4710,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         retractSpeed = preset.retractMmS,
                         nozzleTempInitialLayer = preset.nozzleC,
                         bedTempInitialLayer = preset.bedC,
-                        color = nextPresets.firstOrNull { it.index == 0 }?.color ?: "#202020",
+                        color = preset.colorHex ?: nextPresets.firstOrNull { it.index == 0 }?.color ?: "#202020",
                         maxVolumetricSpeed = if (preset.material == "TPU") 2.0f else null
                     )
                 )
@@ -4718,10 +4718,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     filaments.first { entries -> entries.any { it.id == profileId } }
                 }
                 val newSlot0 = if (slot0 < 0) {
-                    ExtruderPreset(index = 0, materialType = preset.material, filamentProfileId = profileId)
+                    ExtruderPreset(index = 0, materialType = preset.material,
+                        color = preset.colorHex ?: "#202020", filamentProfileId = profileId)
                 } else {
                     nextPresets[slot0].copy(
                         materialType = preset.material,
+                        color = preset.colorHex ?: nextPresets[slot0].color,
                         // Link the exact recipe instead of inheriting a mismatched PLA profile.
                         filamentProfileId = profileId
                     )
@@ -4758,7 +4760,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // Await the active-slot flow before allowing immediate auto-slice.
                 withTimeout(3_000L) {
                     extruderPresets.first { slots ->
-                        slots.any { it.index == 0 && it.materialType == preset.material }
+                        slots.any { it.index == 0 && it.materialType == preset.material &&
+                            (preset.colorHex == null || it.color.equals(preset.colorHex, ignoreCase = true)) }
                     }
                 }
                 settingsRepo.saveSliceConfig(newConfig)
@@ -4778,6 +4781,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 _config.value = newConfig
                 setFilamentMaterialOverride(0, preset.material)
+                // Preview colour is separate from polymer type and physical spool identity.
+                preset.colorHex?.let { hex ->
+                    setFilamentColorOverride(0, hex)
+                    _activeExtruderColors.value = listOf(hex)
+                }
                 if (lastModelInfo != null) profileNeedsReEmbed = true
                 _sliceStale.value = true
                 nightPrintExpectedPreset = preset
