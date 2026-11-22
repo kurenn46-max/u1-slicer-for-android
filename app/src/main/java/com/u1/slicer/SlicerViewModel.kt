@@ -4784,7 +4784,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // Preview colour is separate from polymer type and physical spool identity.
                 preset.colorHex?.let { hex ->
                     setFilamentColorOverride(0, hex)
-                    _activeExtruderColors.value = listOf(hex)
+                    _activeExtruderColors.value = MutableList(4) { "" }.apply { this[0] = hex }
                 }
                 if (lastModelInfo != null) profileNeedsReEmbed = true
                 _sliceStale.value = true
