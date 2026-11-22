@@ -13,7 +13,7 @@ import java.util.zip.ZipInputStream
  * No G-code or scripts are permitted. This reader cannot send a print job.
  */
 object NightPrintJobPackage {
-    data class Job(val model: File, val preset: NightPrintCode.Preset, val sha256: String)
+    data class Job(val model: File, val preset: NightPrintCode.Preset, val code: String, val sha256: String)
 
     private const val MAX_ARCHIVE_UNPACKED = 50L * 1024 * 1024
     private const val MAX_MODEL = 49L * 1024 * 1024
@@ -100,7 +100,7 @@ object NightPrintJobPackage {
                     digest.update(buffer, 0, n)
                 }
             }
-            return Job(model, preset, digest.digest().joinToString("") { "%02x".format(it) })
+            return Job(model, preset, settings, digest.digest().joinToString("") { "%02x".format(it) })
         } catch (t: Throwable) {
             model?.delete()
             throw t
