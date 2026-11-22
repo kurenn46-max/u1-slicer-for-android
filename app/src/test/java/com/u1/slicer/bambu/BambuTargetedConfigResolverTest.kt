@@ -68,6 +68,10 @@ class BambuTargetedConfigResolverTest {
         assertEquals(profile.bedSizeX, resolved.bedSizeX)
         assertEquals(profile.bedSizeY, resolved.bedSizeY)
         assertEquals(profile.maxPrintHeight, resolved.maxPrintHeight)
+        // A1 mini must NEVER inherit Snapmaker's 270mm bed from base settings.
+        assertEquals(180f, resolved.bedSizeX)
+        assertEquals(180f, resolved.bedSizeY)
+        assertEquals(180f, resolved.maxPrintHeight)
         assertEquals("BAMBU_A1_MINI", resolved.machineTarget)
         assertTrue(resolved.machineStartGcode.contains("date: 20240620"))
         assertTrue(resolved.machineEndGcode.contains("date: 20231229"))
