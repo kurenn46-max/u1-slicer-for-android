@@ -81,6 +81,48 @@ class NightPrintGcodeAuditTest {
         assertEquals(250, approved.startupNozzlePeakC)
     }
 
+    @Test fun acceptsToolSelectedNozzleTargetAndDecimalInteger() {
+        val gcode = valid.replace("M104 S225", "M104 T0 S225.0")
+        assertTrue(audit(gcode).passed)
+    }
+
+    @Test fun acceptsGcodeWaitRCommands() {
+        val gcode = valid.replace("M109 S225", "M109 R225")
+            .replace("M140 S50", "M190 R50")
+        assertTrue(audit(gcode).passed)
+    }
+
+    @Test fun rejectsOverheatWhenToolSelectorPrecedesTemperature() {
+        val result = audit(valid + "\nM104 T0 S250")
+        assertFalse(result.passed)
+        assertTrue(result.errors.any { it.contains("AFTER layer") })
+    }
+
+    @Test fun rejectsTooHotStartupWithToolSelectorEvenWhenApproved() {
+        val gcode = valid.replace(";LAYER_CHANGE", "M104 T0 S270\n;LAYER_CHANGE")
+        val result = NightPrintGcodeAudit.inspect(temp(gcode), "TPU", 225, 50, true)
+        assertFalse(result.passed)
+        assertTrue(result.errors.any { it.contains("material cap") })
+    }
+
+    @Test fun rejectsBedOverheatWhenHeaterSelectorPrecedesTemperature() {
+        val result = audit(valid + "\nM140 P0 S90")
+        assertFalse(result.passed)
+        assertTrue(result.errors.any { it.contains("bed temperature") })
+    }
+
+    @Test fun rejectsUnknownTemperatureCommandInsteadOfIgnoringIt() {
+        val result = audit(valid + "\nM104 T0 Q270")
+        assertFalse(result.passed)
+        assertTrue(result.errors.any { it.contains("Unrecognized or unsafe temperature") })
+    }
+
+    @Test fun rejectsFractionalTemperatureCommandInsteadOfTruncatingIt() {
+        val result = audit(valid + "\nM104 S225.5")
+        assertFalse(result.passed)
+        assertTrue(result.errors.any { it.contains("Unrecognized or unsafe temperature") })
+    }
+
     @Test fun rejectsUnexpected270cDuringStartupEvenWithApproval() {
         val invalid = valid.replace(";LAYER_CHANGE", "M104 S270\n;LAYER_CHANGE")
         assertFalse(NightPrintGcodeAudit.inspect(temp(invalid), "TPU", 225, 50, true).passed)
