@@ -6349,6 +6349,35 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         return@launch
                     }
 
+                    // NIGHT PRINT experimental safety gate — only armed after the user
+                    // explicitly applies a code in this app session.
+                    // Runs BEFORE creating a Bambu upload artifact or showing Print controls.
+                    nightPrintExpectedPreset?.let { expected ->
+                        val audit = NightPrintGcodeAudit.inspect(
+                            File(result.gcodePath), expected.material, expected.nozzleC, expected.bedC
+                        )
+                        diagnostics.recordEvent(
+                            "night_print_gcode_audit",
+                            mapOf(
+                                "passed" to audit.passed,
+                                "expectedMaterial" to expected.material,
+                                "recognizedMaterials" to audit.recognizedMaterials.sorted(),
+                                "printerModel" to audit.printerModel,
+                                "errors" to audit.errors,
+                                "warnings" to audit.warnings
+                            )
+                        )
+                        if (!audit.passed) {
+                            diagnostics.clearSliceInProgress()
+                            _state.value = SlicerState.Error(
+                                "NIGHT PRINT safety check blocked this G-code.\\n\\n" +
+                                    audit.errors.joinToString("\\n") +
+                                    "\\n\\nReview material mapping; do not print this file."
+                            )
+                            return@launch
+                        }
+                    }
+
                     diagnostics.recordEvent(
                         "slice_succeeded",
                         mapOf(
