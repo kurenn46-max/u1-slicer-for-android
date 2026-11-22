@@ -6,6 +6,7 @@ import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
 import java.util.zip.ZipInputStream
+import java.util.zip.ZipFile
 
 /**
  * NIGHT PRINT job exchange format: a ZIP containing exactly
@@ -86,12 +87,23 @@ object NightPrintJobPackage {
             val modelFile = model ?: throw IllegalArgumentException("Missing model")
             val code = settings ?: throw IllegalArgumentException("Missing settings")
             val preset = NightPrintCode.parse(code)
-            // Minimum format check; the native 3MF/STL importer performs full mesh validation.
+            // Validate the NESTED 3MF as an actual archive, not merely a "PK" header.
+            // The native importer still checks geometry and slice compatibility.
             if (modelName == "model.3mf") {
-                val bytes = ByteArray(4)
-                val read = modelFile.inputStream().use { it.read(bytes) }
-                require(read == 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte()) {
-                    "model.3mf is not a ZIP/3MF file"
+                ZipFile(modelFile).use { nested ->
+                    val parts = nested.entries().toList()
+                    require(parts.size in 2..500) { "3MF entry count is invalid" }
+                    require(parts.any { it.name == "[Content_Types].xml" }) {
+                        "3MF is missing [Content_Types].xml"
+                    }
+                    require(parts.any { it.name.startsWith("3D/") && it.name.endsWith(".model") }) {
+                        "3MF is missing the 3D model part"
+                    }
+                    require(parts.none { it.name.startsWith("/") || it.name.contains("..") }) {
+                        "3MF has an unsafe path"
+                    }
+                    val expandedSize = parts.sumOf { if (it.size < 0) 250_000_001L else it.size }
+                    require(expandedSize <= 250_000_000L) { "3MF expands beyond safety limit" }
                 }
             }
             val digest = MessageDigest.getInstance("SHA-256")
