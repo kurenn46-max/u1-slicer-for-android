@@ -165,7 +165,7 @@ class MainActivity : ComponentActivity() {
         val summary = viewModel.buildModelDebugSummary() ?: return
         val clipboard = getSystemService(android.content.ClipboardManager::class.java)
         clipboard.setPrimaryClip(
-            android.content.ClipData.newPlainText("Your One Slicer Model Debug Summary", summary)
+            android.content.ClipData.newPlainText("NIGHT PRINT GENESIS Model Debug Summary", summary)
         )
         android.widget.Toast.makeText(this, "Debug summary copied", android.widget.Toast.LENGTH_SHORT).show()
     }
@@ -1950,7 +1950,7 @@ fun PrepareScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Your One Slicer", fontWeight = FontWeight.Bold)
+                        Text(androidx.compose.ui.res.stringResource(R.string.app_name), fontWeight = FontWeight.Bold)
                         Text(
                             "☕ Support development",
                             style = MaterialTheme.typography.labelSmall,
@@ -2620,7 +2620,7 @@ private fun MakerWorldModeDialog(onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.titleSmall
                 )
                 Text(
-                    "Best for signed-in browsing. Google login works here, and it is the most reliable way to download a 3MF/STL or share a MakerWorld model link back to Your One Slicer.",
+                    "Best for signed-in browsing. Google login works here, and it is the most reliable way to download a 3MF/STL or share a MakerWorld model link back to NIGHT PRINT GENESIS.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 HorizontalDivider()
@@ -2692,7 +2692,7 @@ fun PreviewScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Your One Slicer", fontWeight = FontWeight.Bold)
+                        Text(androidx.compose.ui.res.stringResource(R.string.app_name), fontWeight = FontWeight.Bold)
                         Text(
                             "☕ Support development",
                             style = MaterialTheme.typography.labelSmall,
