@@ -4763,6 +4763,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 settingsRepo.saveSliceConfig(newConfig)
                 settingsRepo.saveSlicingOverrides(newOverrides)
+                // The next slice reads the StateFlow, not the just-written
+                // DataStore object. Wait for emission before allowing auto-slice.
+                withTimeout(4_000L) {
+                    slicingOverrides.first { effective ->
+                        effective.layerHeight == newOverrides.layerHeight &&
+                        effective.wallCount == newOverrides.wallCount &&
+                        effective.infillDensity == newOverrides.infillDensity &&
+                        effective.sparseInfillSpeed == newOverrides.sparseInfillSpeed &&
+                        effective.supports == newOverrides.supports &&
+                        effective.bedTemp == newOverrides.bedTemp &&
+                        effective.brimWidth == newOverrides.brimWidth
+                    }
+                }
                 _config.value = newConfig
                 setFilamentMaterialOverride(0, preset.material)
                 if (lastModelInfo != null) profileNeedsReEmbed = true
