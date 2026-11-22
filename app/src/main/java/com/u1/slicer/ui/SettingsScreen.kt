@@ -101,6 +101,7 @@ fun SettingsScreen(
     var verifiedNightCode by remember { mutableStateOf<NightPrintCode.Preset?>(null) }
     var nightCodeError by remember { mutableStateOf<String?>(null) }
     var nightCodeStatus by remember { mutableStateOf<String?>(null) }
+    var nightCodeApplying by remember { mutableStateOf(false) }
 
     val currentOverrides by viewModel.slicingOverrides.collectAsState()
     var overrides by remember(currentOverrides) { mutableStateOf(currentOverrides) }
@@ -704,44 +705,28 @@ fun SettingsScreen(
                     Text(preset.preview())
                     Text(
                         "NOT included: inner wall speed, cooling fan, max volumetric flow, " +
-                            "machine profile and active filament slot. Confirm these in Prepare " +
+                            "machine profile and physical printer spool. Confirm these in Prepare " +
                             "and audit G-code before printing.",
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall
                     )
-                    Button(onClick = {
-                        viewModel.updateConfig { cfg ->
-                            cfg.copy(
-                                filamentType = preset.material,
-                                nozzleTemp = preset.nozzleC,
-                                bedTemp = preset.bedC,
-                                printSpeed = preset.printMmS,
-                                travelSpeed = preset.travelMmS,
-                                firstLayerSpeed = preset.firstLayerMmS,
-                                retractLength = preset.retractMm,
-                                retractSpeed = preset.retractMmS,
-                                layerHeight = preset.layerMm,
-                                perimeters = preset.wallCount,
-                                fillDensity = preset.infillPercent / 100f,
-                                supportEnabled = preset.support,
-                                brimWidth = preset.brimMm
-                            )
+                    Button(
+                        enabled = !nightCodeApplying,
+                        onClick = {
+                            nightCodeApplying = true
+                            viewModel.applyNightPrintPreset(preset) { error ->
+                                nightCodeApplying = false
+                                if (error == null) {
+                                    verifiedNightCode = null
+                                    nightCodeError = null
+                                    nightCodeStatus = "Saved locally and synchronized the selected material slot. Audit the new G-code before printing."
+                                } else {
+                                    nightCodeError = error
+                                    nightCodeStatus = null
+                                }
+                            }
                         }
-                        val applied = overrides.copy(
-                            layerHeight = OverrideValue(OverrideMode.OVERRIDE, preset.layerMm),
-                            wallCount = OverrideValue(OverrideMode.OVERRIDE, preset.wallCount),
-                            infillDensity = OverrideValue(OverrideMode.OVERRIDE, preset.infillPercent / 100f),
-                            sparseInfillSpeed = OverrideValue(OverrideMode.OVERRIDE, preset.infillMmS),
-                            supports = OverrideValue(OverrideMode.OVERRIDE, preset.support),
-                            bedTemp = OverrideValue(OverrideMode.OVERRIDE, preset.bedC),
-                            brimWidth = OverrideValue(OverrideMode.OVERRIDE, preset.brimMm)
-                        )
-                        overrides = applied
-                        viewModel.saveConfig()
-                        viewModel.saveSlicingOverrides(applied)
-                        verifiedNightCode = null
-                        nightCodeStatus = "Saved locally. Verify material mapping and slice G-code before printing."
-                    }) { Text("Apply settings (no printing)") }
+                    ) { Text(if (nightCodeApplying) "Applying..." else "Apply settings (no printing)") }
                 }
                 nightCodeStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
