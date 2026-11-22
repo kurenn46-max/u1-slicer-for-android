@@ -36,6 +36,19 @@ class NightPrintCodeTest {
         assertTrue(!p.support)
     }
 
+    @Test fun acceptsOptionalBlackPreviewColor() {
+        val p = NightPrintCode.parse(valid + "\ncolor_hex=#000000")
+        assertEquals("#000000", p.colorHex)
+    }
+
+    @Test fun keepsPreviousV1CodesValidWithoutColor() {
+        assertEquals(null, NightPrintCode.parse(valid).colorHex)
+    }
+
+    @Test fun rejectsMalformedPreviewColor() {
+        reject(valid + "\ncolor_hex=FF0000")
+    }
+
     @Test fun rejectsIncorrectMaterial() {
         reject(valid.replace("material=TPU", "material=PLA"))
     }
