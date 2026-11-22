@@ -1,4 +1,4 @@
-name: NIGHT PRINT trial checks
+name: NIGHT PRINT release-gate tests
 
 on:
   push:
@@ -6,11 +6,9 @@ on:
       - feature/nightprint-code-import-v1-20261122
   pull_request:
     paths:
-      - 'app/src/main/java/com/u1/slicer/data/NightPrint*.kt'
-      - 'app/src/test/java/com/u1/slicer/data/NightPrint*.kt'
-      - 'app/src/main/java/com/u1/slicer/ui/SettingsScreen.kt'
-      - 'app/src/main/java/com/u1/slicer/SlicerViewModel.kt'
+      - 'app/**'
       - '.github/workflows/nightprint-trial-check.yml'
+  workflow_dispatch:
 
 concurrency:
   group: nightprint-genesis-ci-${{ github.ref }}
@@ -20,9 +18,10 @@ permissions:
   contents: read
 
 jobs:
-  android-unit-and-build:
+  quality-gate:
+    name: Quality gate - regressions, APK, contract
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,27 +30,61 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Use preinstalled Android SDK
+      - name: Use Android SDK
         run: |
-          test -d "$ANDROID_HOME" || (echo "ANDROID_HOME is missing" && exit 1)
+          set -euo pipefail
+          test -d "$ANDROID_HOME"
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           if [ ! -d "$ANDROID_HOME/platforms/android-34" ]; then
             SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
             "$SDKMGR" "platforms;android-34" "build-tools;34.0.0"
           fi
       - uses: gradle/actions/setup-gradle@v4
-      - name: Create ephemeral debug signing key
+      - name: Create test-only signing key
         run: |
+          set -euo pipefail
           mkdir -p "$HOME/.android"
-          keytool -genkeypair -noprompt -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=Android Debug,O=NIGHT PRINT Trial,C=JP"
-      - name: Compile experimental debug APK (no printer connection)
+          keytool -genkeypair -noprompt -keystore "$HOME/.android/debug.keystore" \
+            -storepass android -alias androiddebugkey -keypass android \
+            -keyalg RSA -keysize 2048 -validity 3650 \
+            -dname "CN=Android Debug,O=NIGHT PRINT CI,C=JP"
+      - name: Run complete JVM regression suite BEFORE APK distribution
+        run: bash ./gradlew --no-daemon testDebugUnitTest
+      - name: Compile Android debug APK
         run: bash ./gradlew --no-daemon assembleDebug
-      - name: Keep debug APK for private testing
+      - name: Verify signed APK, separate package ID and arm64 slicer
+        run: |
+          set -euo pipefail
+          APK=$(find app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' -type f | head -1)
+          test -n "$APK"
+          test "$(stat -c%s "$APK")" -gt 5000000
+          AAPT="$ANDROID_HOME/build-tools/34.0.0/aapt"
+          APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner"
+          BADGING=$("$AAPT" dump badging "$APK")
+          echo "$BADGING" | grep -Fq "package: name='com.u1.slicer.orca.genesis'"
+          echo "$BADGING" | grep -Fq "application-label:'NIGHT PRINT GENESIS TEST'"
+          "$APKSIGNER" verify --verbose "$APK"
+          unzip -Z1 "$APK" | grep -Fxq 'lib/arm64-v8a/libprusaslicer-jni.so'
+          echo "### NIGHT PRINT GENESIS automated gate" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Complete JVM test suite: PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "- APK compile, signature, package name, app label and arm64 native library: PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Physical Android UI and real A1 mini print: NOT TESTED. NOT a production release." >> "$GITHUB_STEP_SUMMARY"
+          sha256sum "$APK" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish test reports even if a check fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightprint-test-results-${{ github.run_id }}
+          path: |
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Save QA-candidate APK ONLY after all gates pass
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: night-print-trial-debug-apk
+          name: nightprint-QA-candidate-${{ github.sha }}
           path: app/build/outputs/apk/debug/*.apk
-          retention-days: 7
-      - name: Full JVM regression tests (no printer connection)
-        run: bash ./gradlew --no-daemon testDebugUnitTest
+          if-no-files-found: error
+          retention-days: 14
