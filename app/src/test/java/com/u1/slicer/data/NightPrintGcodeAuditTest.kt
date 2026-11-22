@@ -1,6 +1,7 @@
 package com.u1.slicer.data
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -23,6 +24,9 @@ class NightPrintGcodeAuditTest {
         ; filament_type = TPU
         ; printer_model = Bambu Lab A1 mini
         ; nozzle_temperature_initial_layer = 225
+        ;LAYER_CHANGE
+        ;Z:0.2
+        G1 X5 Y5 E0.5 F1800
     """
 
     private fun audit(text: String) = NightPrintGcodeAudit.inspect(temp(text), "TPU", 225, 50)
@@ -56,6 +60,36 @@ class NightPrintGcodeAuditTest {
     }
     @Test fun allowsLowerStartupNozzleTemperature() =
         assertTrue(audit(valid.replace("M109 S140", "M109 S150")).passed)
+
+    @Test fun detectsRealisticTpuPurgeAndRequiresExplicitApproval() {
+        val purge = valid.replace(";LAYER_CHANGE", "M104 S250\\nM109 S250\\n;LAYER_CHANGE")
+        val blocked = audit(purge)
+        assertFalse(blocked.passed)
+        assertTrue(blocked.requiresStartupHeatApproval)
+        assertTrue(blocked.errors.any { it.contains("explicit approval") })
+        val approved = NightPrintGcodeAudit.inspect(temp(purge), "TPU", 225, 50,
+            startupHeatApproved = true)
+        assertTrue(approved.passed)
+        assertTrue(approved.warnings.any { it.contains("250") })
+        assertEquals(250, approved.startupNozzlePeakC)
+    }
+
+    @Test fun rejectsUnexpected270cDuringStartupEvenWithApproval() {
+        val invalid = valid.replace(";LAYER_CHANGE", "M104 S270\\n;LAYER_CHANGE")
+        assertFalse(NightPrintGcodeAudit.inspect(temp(invalid), "TPU", 225, 50, true).passed)
+    }
+
+    @Test fun rejects250cAfterFirstLayerEvenWithApproval() {
+        val badPrint = valid + "\\nM104 S250"
+        val result = NightPrintGcodeAudit.inspect(temp(badPrint), "TPU", 225, 50, true)
+        assertFalse(result.passed)
+        assertTrue(result.errors.any { it.contains("AFTER layer") })
+    }
+
+    @Test fun rejectsMissingLayerMarker() {
+        val bad = valid.replace(";LAYER_CHANGE", ";MISSING_LAYER_MARKER")
+        assertFalse(audit(bad).passed)
+    }
 
     @Test fun rejectsEmptyGcode() = assertFalse(audit("").passed)
 }
