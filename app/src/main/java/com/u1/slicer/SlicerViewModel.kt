@@ -96,6 +96,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.CompletableDeferred
 import java.io.File
 import java.security.MessageDigest
 import java.util.zip.ZipFile
@@ -367,6 +369,35 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val config: StateFlow<SliceConfig> = _config.asStateFlow()
     /** Enabled only for the settings-code workflow during this app process. */
     private var nightPrintExpectedPreset: NightPrintCode.Preset? = null
+
+    /** User consent is only for the specific already-generated G-code, never automatic printing. */
+    data class NightPrintHeatReview(
+        val material: String,
+        val printNozzleC: Int,
+        val startupPeakC: Int,
+        val bedC: Int
+    )
+    private val _nightPrintHeatReview = MutableStateFlow<NightPrintHeatReview?>(null)
+    val nightPrintHeatReview: StateFlow<NightPrintHeatReview?> = _nightPrintHeatReview.asStateFlow()
+    @Volatile private var pendingNightPrintHeatDecision: CompletableDeferred<Boolean>? = null
+
+    fun respondNightPrintHeatReview(approved: Boolean) {
+        pendingNightPrintHeatDecision?.complete(approved)
+    }
+
+    /** Bind manual review to unchanged G-code bytes. */
+    private fun nightPrintGcodeSha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(65536)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
 
     /**
      * H2D source-filament to physical-nozzle preference. Values deliberately
