@@ -41,8 +41,10 @@ android {
         debug {
             minifyEnabled false
             // Install experimental GENESIS alongside the stable NIGHT PRINT app.
-            applicationIdSuffix ".genesis"
-            versionNameSuffix "-GENESIS-ALPHA"
+            // New isolated QA package: older CI runs create throwaway signing keys.
+            // Never overwrite an existing GENESIS test app with a different certificate.
+            applicationIdSuffix ".genesis.qa2"
+            versionNameSuffix "-GENESIS-QA2"
             signingConfig signingConfigs.debug
         }
     }
