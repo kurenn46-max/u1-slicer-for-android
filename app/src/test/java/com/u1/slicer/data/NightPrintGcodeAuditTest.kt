@@ -62,7 +62,7 @@ class NightPrintGcodeAuditTest {
         assertTrue(audit(valid.replace("M109 S140", "M109 S150")).passed)
 
     @Test fun detectsRealisticTpuPurgeAndRequiresExplicitApproval() {
-        val purge = valid.replace(";LAYER_CHANGE", "M104 S250\\nM109 S250\\n;LAYER_CHANGE")
+        val purge = valid.replace(";LAYER_CHANGE", "M104 S250\nM109 S250\n;LAYER_CHANGE")
         val blocked = audit(purge)
         assertFalse(blocked.passed)
         assertTrue(blocked.requiresStartupHeatApproval)
@@ -75,12 +75,12 @@ class NightPrintGcodeAuditTest {
     }
 
     @Test fun rejectsUnexpected270cDuringStartupEvenWithApproval() {
-        val invalid = valid.replace(";LAYER_CHANGE", "M104 S270\\n;LAYER_CHANGE")
+        val invalid = valid.replace(";LAYER_CHANGE", "M104 S270\n;LAYER_CHANGE")
         assertFalse(NightPrintGcodeAudit.inspect(temp(invalid), "TPU", 225, 50, true).passed)
     }
 
     @Test fun rejects250cAfterFirstLayerEvenWithApproval() {
-        val badPrint = valid + "\\nM104 S250"
+        val badPrint = valid + "\nM104 S250"
         val result = NightPrintGcodeAudit.inspect(temp(badPrint), "TPU", 225, 50, true)
         assertFalse(result.passed)
         assertTrue(result.errors.any { it.contains("AFTER layer") })
