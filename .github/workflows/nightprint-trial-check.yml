@@ -27,7 +27,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - name: Use preinstalled Android SDK
+        run: |
+          test -d "$ANDROID_HOME" || (echo "ANDROID_HOME is missing" && exit 1)
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          if [ ! -d "$ANDROID_HOME/platforms/android-34" ]; then
+            SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+            "$SDKMGR" "platforms;android-34" "build-tools;34.0.0"
+          fi
       - uses: gradle/actions/setup-gradle@v4
       - name: JVM regression tests and debug APK build (no printer connection)
         run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
