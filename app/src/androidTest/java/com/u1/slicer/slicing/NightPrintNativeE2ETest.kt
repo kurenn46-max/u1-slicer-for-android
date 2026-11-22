@@ -106,7 +106,12 @@ class NightPrintNativeE2ETest {
                 brimWidth = p.brimMm,
                 filamentNozzleTempInitialLayers = intArrayOf(p.nozzleC),
                 filamentBedTempInitialLayers = intArrayOf(p.bedC),
-                filamentMaxVolumetricSpeeds = floatArrayOf(2.0f)
+                filamentMaxVolumetricSpeeds = floatArrayOf(2.0f),
+                // The app marks these as explicitly selected when applying .npjob.
+                // Without these flags the Bambu STL PLA/220C baseline may win.
+                bambuExplicitOverrides =
+                    "|filament_type|nozzle_temperature|hot_plate_temp|textured_plate_temp|" +
+                    "layer_height|wall_loops|sparse_infill_density|enable_support|brim_width|"
             )
         )
         assertEquals("BAMBU_A1_MINI", config.machineTarget)
