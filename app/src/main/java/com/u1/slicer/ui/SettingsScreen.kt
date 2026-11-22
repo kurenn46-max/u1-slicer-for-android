@@ -64,6 +64,7 @@ import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.SlicingOverrides
 import com.u1.slicer.data.NightPrintCode
+import com.u1.slicer.data.NightPrintJobPackage
 import com.u1.slicer.printer.PrinterViewModel
 
 private sealed interface UpdateCheckState {
@@ -102,6 +103,7 @@ fun SettingsScreen(
     var nightCodeError by remember { mutableStateOf<String?>(null) }
     var nightCodeStatus by remember { mutableStateOf<String?>(null) }
     var nightCodeApplying by remember { mutableStateOf(false) }
+    var nightPackage by remember { mutableStateOf<NightPrintJobPackage.Job?>(null) }
 
     val currentOverrides by viewModel.slicingOverrides.collectAsState()
     var overrides by remember(currentOverrides) { mutableStateOf(currentOverrides) }
@@ -660,8 +662,43 @@ fun SettingsScreen(
                 }
             }
 
-            // ---- NIGHT PRINT code import (opt-in; never sends or starts printing) ----
+            // ---- NIGHT PRINT one-file job import (opt-in; never starts printing) ----
+            val nightPackagePicker = rememberLauncherForActivityResult(
+                ActivityResultContracts.GetContent()
+            ) { uri: Uri? ->
+                if (uri != null) {
+                    scope.launch {
+                        runCatching {
+                            withContext(Dispatchers.IO) {
+                                val input = context.contentResolver.openInputStream(uri)
+                                    ?: throw IllegalArgumentException("Could not open NIGHT PRINT package")
+                                input.use { NightPrintJobPackage.unpack(it, File(context.cacheDir, "nightprint_jobs")) }
+                            }
+                        }.onSuccess { job ->
+                            nightPackage?.model?.delete()
+                            nightPackage = job
+                            nightCodeInput = job.code
+                            verifiedNightCode = job.preset
+                            nightCodeError = null
+                            nightCodeStatus = "Package imported: model + recipe. Review values, then apply."
+                        }.onFailure { error ->
+                            nightCodeError = error.message ?: "Job package could not be imported"
+                            nightCodeStatus = null
+                        }
+                    }
+                }
+            }
             SettingsSection("NIGHT PRINT Code (experimental)") {
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { nightPackagePicker.launch("*/*") }
+                ) { Text("Open NIGHT PRINT job (.npjob): 3MF + settings") }
+                nightPackage?.let { job ->
+                    Text(
+                        "Loaded package: " + job.model.name + " | SHA256: " + job.sha256.take(12) + "…",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
                 Text(
                     "Paste a NIGHTPRINT-SETTINGS/V1 code from your assistant. " +
                     "Validate and review the values before saving. No G-code is executed or sent.",
@@ -674,6 +711,7 @@ fun SettingsScreen(
                         verifiedNightCode = null
                         nightCodeError = null
                         nightCodeStatus = null
+                        nightPackage = null // Editing the code detaches the previous bundled model.
                     },
                     label = { Text("Paste settings code") },
                     modifier = Modifier.fillMaxWidth(),
@@ -712,29 +750,36 @@ fun SettingsScreen(
                     )
                     val applyAndMaybeSlice: (Boolean) -> Unit = { autoSlice ->
                         nightCodeApplying = true
-                        viewModel.applyNightPrintPreset(preset) { error ->
+                        val staged = nightPackage
+                        val onApplied: (String?) -> Unit = { error ->
                             nightCodeApplying = false
                             if (error == null) {
                                 verifiedNightCode = null
                                 nightCodeError = null
+                                nightPackage = null
                                 if (autoSlice) {
-                                    nightCodeStatus = "Slicing locally with safety audit; no printer commands sent."
-                                    viewModel.startSlicing()
+                                    nightCodeStatus = "Local slicing with G-code safety audit; NO printer commands sent."
+                                    if (staged == null) viewModel.startSlicing()
                                     onNavigatePreview()
                                 } else {
-                                    nightCodeStatus = "Saved and synchronized the selected material slot. Re-slice before printing."
+                                    nightCodeStatus = "Imported locally. Preview and re-slice before printing."
                                 }
                             } else {
                                 nightCodeError = error
                                 nightCodeStatus = null
                             }
                         }
+                        if (staged != null) {
+                            viewModel.openNightPrintJob(staged, autoSlice, onApplied)
+                        } else {
+                            viewModel.applyNightPrintPreset(preset, onApplied)
+                        }
                     }
                     Button(
                         enabled = !nightCodeApplying,
                         onClick = { applyAndMaybeSlice(false) }
                     ) { Text(if (nightCodeApplying) "Applying..." else "Apply settings only") }
-                    if (viewModel.modelInfo.value != null) {
+                    if (nightPackage != null || viewModel.modelInfo.value != null) {
                         OutlinedButton(
                             enabled = !nightCodeApplying,
                             onClick = { applyAndMaybeSlice(true) }
