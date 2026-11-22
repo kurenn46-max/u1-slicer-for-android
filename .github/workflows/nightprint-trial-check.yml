@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: false
+          submodules: true
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -40,8 +40,8 @@ jobs:
         run: |
           mkdir -p "$HOME/.android"
           keytool -genkeypair -noprompt -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=Android Debug,O=NIGHT PRINT Trial,C=JP"
-      - name: JVM regression tests and debug APK build (no printer connection)
-        run: bash ./gradlew --no-daemon testDebugUnitTest assembleDebug
+      - name: Compile experimental debug APK (no printer connection)
+        run: bash ./gradlew --no-daemon assembleDebug
       - name: Keep debug APK for private testing
         if: success()
         uses: actions/upload-artifact@v4
@@ -49,3 +49,5 @@ jobs:
           name: night-print-trial-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 7
+      - name: Full JVM regression tests (no printer connection)
+        run: bash ./gradlew --no-daemon testDebugUnitTest
