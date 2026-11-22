@@ -36,6 +36,10 @@ jobs:
             "$SDKMGR" "platforms;android-34" "build-tools;34.0.0"
           fi
       - uses: gradle/actions/setup-gradle@v4
+      - name: Create ephemeral debug signing key
+        run: |
+          mkdir -p "$HOME/.android"
+          keytool -genkeypair -noprompt -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=Android Debug,O=NIGHT PRINT Trial,C=JP"
       - name: JVM regression tests and debug APK build (no printer connection)
         run: bash ./gradlew --no-daemon testDebugUnitTest assembleDebug
       - name: Keep debug APK for private testing
