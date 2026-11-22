@@ -63,6 +63,7 @@ import kotlinx.coroutines.launch
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.SlicingOverrides
+import com.u1.slicer.data.NightPrintCode
 import com.u1.slicer.printer.PrinterViewModel
 
 private sealed interface UpdateCheckState {
@@ -96,6 +97,10 @@ fun SettingsScreen(
     var firstLayerSpeed by remember(config) { mutableStateOf(config.firstLayerSpeed.toInt().toString()) }
     var retractLength by remember(config) { mutableStateOf("%.1f".format(config.retractLength)) }
     var retractSpeed by remember(config) { mutableStateOf(config.retractSpeed.toInt().toString()) }
+    var nightCodeInput by remember { mutableStateOf("") }
+    var verifiedNightCode by remember { mutableStateOf<NightPrintCode.Preset?>(null) }
+    var nightCodeError by remember { mutableStateOf<String?>(null) }
+    var nightCodeStatus by remember { mutableStateOf<String?>(null) }
 
     val currentOverrides by viewModel.slicingOverrides.collectAsState()
     var overrides by remember(currentOverrides) { mutableStateOf(currentOverrides) }
@@ -652,6 +657,93 @@ fun SettingsScreen(
                             tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                     }
                 }
+            }
+
+            // ---- NIGHT PRINT code import (opt-in; never sends or starts printing) ----
+            SettingsSection("NIGHT PRINT Code (experimental)") {
+                Text(
+                    "Paste a NIGHTPRINT-SETTINGS/V1 code from your assistant. " +
+                    "Validate and review the values before saving. No G-code is executed or sent.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    value = nightCodeInput,
+                    onValueChange = {
+                        nightCodeInput = it
+                        verifiedNightCode = null
+                        nightCodeError = null
+                        nightCodeStatus = null
+                    },
+                    label = { Text("Paste settings code") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 4,
+                    maxLines = 12
+                )
+                OutlinedButton(onClick = {
+                    runCatching { NightPrintCode.parse(nightCodeInput) }
+                        .onSuccess { preset ->
+                            verifiedNightCode = preset
+                            nightCodeError = null
+                        }
+                        .onFailure { cause ->
+                            verifiedNightCode = null
+                            nightCodeError = cause.message ?: "Invalid settings code"
+                        }
+                }) { Text("Validate and preview") }
+
+                nightCodeError?.let { message ->
+                    Text(message, color = MaterialTheme.colorScheme.error)
+                }
+                val preset = verifiedNightCode
+                if (preset != null) {
+                    Text(
+                        "Current: ${config.filamentType}, ${config.nozzleTemp} C, " +
+                            "${config.bedTemp} C, ${config.printSpeed} mm/s",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(preset.preview())
+                    Text(
+                        "NOT included: inner wall speed, cooling fan, max volumetric flow, " +
+                            "machine profile and active filament slot. Confirm these in Prepare " +
+                            "and audit G-code before printing.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Button(onClick = {
+                        viewModel.updateConfig { cfg ->
+                            cfg.copy(
+                                filamentType = preset.material,
+                                nozzleTemp = preset.nozzleC,
+                                bedTemp = preset.bedC,
+                                printSpeed = preset.printMmS,
+                                travelSpeed = preset.travelMmS,
+                                firstLayerSpeed = preset.firstLayerMmS,
+                                retractLength = preset.retractMm,
+                                retractSpeed = preset.retractMmS,
+                                layerHeight = preset.layerMm,
+                                perimeters = preset.wallCount,
+                                fillDensity = preset.infillPercent / 100f,
+                                supportEnabled = preset.support,
+                                brimWidth = preset.brimMm
+                            )
+                        }
+                        val applied = overrides.copy(
+                            layerHeight = OverrideValue(OverrideMode.OVERRIDE, preset.layerMm),
+                            wallCount = OverrideValue(OverrideMode.OVERRIDE, preset.wallCount),
+                            infillDensity = OverrideValue(OverrideMode.OVERRIDE, preset.infillPercent / 100f),
+                            sparseInfillSpeed = OverrideValue(OverrideMode.OVERRIDE, preset.infillMmS),
+                            supports = OverrideValue(OverrideMode.OVERRIDE, preset.support),
+                            bedTemp = OverrideValue(OverrideMode.OVERRIDE, preset.bedC),
+                            brimWidth = OverrideValue(OverrideMode.OVERRIDE, preset.brimMm)
+                        )
+                        overrides = applied
+                        viewModel.saveConfig()
+                        viewModel.saveSlicingOverrides(applied)
+                        verifiedNightCode = null
+                        nightCodeStatus = "Saved locally. Verify material mapping and slice G-code before printing."
+                    }) { Text("Apply settings (no printing)") }
+                }
+                nightCodeStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
 
             // ---- Temperature ----
