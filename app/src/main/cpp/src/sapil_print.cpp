@@ -325,6 +325,20 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     auto explicitly_overrides = [&](const char* key) {
         return explicit_keys.find("|" + std::string(key) + "|") != std::string::npos;
     };
+    // GENESIS and plain STL must not silently inherit PLA from the Bambu
+    // geometry baseline when the caller explicitly selected TPU/PETG.
+    // Imported Bambu 3MF keeps its source filament metadata unless the user
+    // actually overrides filament_type. Do not use the U1 configuration path.
+    if (!has_embedded_profile || explicitly_overrides("filament_type")) {
+        std::vector<std::string> types = config.filament_types;
+        if (types.empty()) {
+            types.push_back(config.filament_type.empty() ? "PLA" : config.filament_type);
+        }
+        if ((int)types.size() < n_ext) types.resize(n_ext, types.back());
+        if ((int)types.size() > n_ext) types.resize(n_ext);
+        dpc.set_key_value("filament_type",
+            new Slic3r::ConfigOptionStrings(std::move(types)));
+    }
     Slic3r::ConfigSubstitutionContext bambu_substitutions{
         Slic3r::ForwardCompatibilitySubstitutionRule::Disable};
     if (explicitly_overrides("layer_height") && config.layer_height > 0.0f)
@@ -359,8 +373,12 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
         dpc.set_key_value("textured_plate_temp", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
         dpc.set_key_value("textured_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
     }
-    if (explicitly_overrides("nozzle_temperature") && !config.extruder_temps.empty()) {
-        std::vector<int> values = config.extruder_temps;
+    if (explicitly_overrides("nozzle_temperature") &&
+        (!config.extruder_temps.empty() || n_ext == 1)) {
+        // For a one-spool GENESIS job, nozzleTemp is the explicit recipe value,
+        // even if a per-extruder array has not yet been populated.
+        std::vector<int> values = config.extruder_temps.empty()
+            ? std::vector<int>{config.nozzle_temp} : config.extruder_temps;
         while ((int)values.size() < n_ext) values.push_back(values.back());
         dpc.set_key_value("nozzle_temperature", new Slic3r::ConfigOptionInts(values));
         dpc.set_key_value("nozzle_temperature_initial_layer", new Slic3r::ConfigOptionInts(std::move(values)));
