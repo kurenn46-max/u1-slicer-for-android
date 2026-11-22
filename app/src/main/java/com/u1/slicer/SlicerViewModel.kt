@@ -40,6 +40,7 @@ import com.u1.slicer.data.SessionStateRepository
 import com.u1.slicer.data.SettingsBackup
 import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.data.NightPrintCode
+import com.u1.slicer.data.NightPrintJobPackage
 import com.u1.slicer.data.NightPrintGcodeAudit
 import com.u1.slicer.data.SliceJob
 import com.u1.slicer.data.SliceResult
@@ -4635,6 +4636,37 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Updates the selected physical slot as well as SliceConfig. Does not send
      * any commands to the physical printer. Callback runs on the UI thread.
      */
+
+    /**
+     * Open a NIGHT PRINT package, then synchronize the selected A1 mini material
+     * and optionally start local slicing. No printer upload/print operation occurs.
+     */
+    fun openNightPrintJob(
+        job: NightPrintJobPackage.Job,
+        autoSlice: Boolean,
+        onResult: (String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                _state.value = SlicerState.Loading("Opening NIGHT PRINT model")
+                loadModelFromFile(job.model)
+                val loadState = withTimeout(120_000L) {
+                    state.first { it is SlicerState.ModelLoaded || it is SlicerState.Error }
+                }
+                if (loadState is SlicerState.Error) {
+                    onResult(loadState.message)
+                    return@launch
+                }
+                applyNightPrintPreset(job.preset) { error ->
+                    if (error == null && autoSlice) startSlicing()
+                    onResult(error)
+                }
+            } catch (e: Exception) {
+                onResult("NIGHT PRINT package import failed: " + (e.message ?: "unknown error"))
+            }
+        }
+    }
+
     fun applyNightPrintPreset(preset: NightPrintCode.Preset, onResult: (String?) -> Unit) {
         val activePrinter = activePrinterForSlicing.value
         if (activePrinter?.kind != com.u1.slicer.data.PrinterKind.BAMBU_LAN ||
