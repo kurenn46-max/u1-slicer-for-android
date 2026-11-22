@@ -4763,6 +4763,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 val newConfig = _config.value.copy(
                     filamentType = preset.material,
+                    filamentTypes = arrayOf(preset.material),
+                    extruderTemps = intArrayOf(preset.nozzleC),
                     nozzleTemp = preset.nozzleC,
                     bedTemp = preset.bedC,
                     printSpeed = preset.printMmS,
@@ -6300,11 +6302,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // deriving num_physical from filament_diameter.size() (= 4 + nMix).
                     mixedFilamentDefinitions = mixedFilamentDefinitions,
                     bambuExplicitOverrides = if (target != SlicerTarget.SnapmakerU1) {
-                        buildExplicitBambuProfileOverrides(
+                        val explicitKeys = buildExplicitBambuProfileOverrides(
                             profileOverrides = profileOverrides,
                             overrides = ov,
                             hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
-                        ).keys.joinToString(separator = "|", prefix = "|", postfix = "|")
+                        ).keys.toMutableSet()
+                        if (target == SlicerTarget.BambuA1Mini && nightPrintExpectedPreset != null) {
+                            // A GENESIS import is an explicit user material/temperature choice.
+                            // Never inherit the STL PLA defaults or an embedded 3MF material.
+                            explicitKeys.addAll(listOf(
+                                "filament_type", "nozzle_temperature",
+                                "hot_plate_temp", "textured_plate_temp",
+                            ))
+                        }
+                        explicitKeys.joinToString(separator = "|", prefix = "|", postfix = "|")
                     } else {
                         ""
                     },
