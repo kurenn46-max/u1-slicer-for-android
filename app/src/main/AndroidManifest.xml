@@ -41,6 +41,7 @@
                 <data android:mimeType="model/3mf" />
                 <!-- 3MF is ZIP-based; some file managers send these MIME types -->
                 <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-nightprint-job" />
                 <data android:mimeType="application/x-zip-compressed" />
             </intent-filter>
             <!-- file:// URIs with octet-stream — pathPattern only works for file:// scheme -->
@@ -56,6 +57,8 @@
                 <data android:pathPattern=".*\\.3MF" />
                 <data android:pathPattern=".*\\.stl" />
                 <data android:pathPattern=".*\\.STL" />
+                <data android:pathPattern=".*\\.npjob" />
+                <data android:pathPattern=".*\\.NPJOB" />
             </intent-filter>
             <!-- content:// with octet-stream — no pathPattern (doesn't work with content://) -->
             <intent-filter>
@@ -84,6 +87,7 @@
                 <data android:mimeType="application/octet-stream" />
                 <data android:mimeType="binary/octet-stream" />
                 <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-nightprint-job" />
                 <data android:mimeType="application/x-zip-compressed" />
                 <data android:mimeType="model/stl" />
                 <data android:mimeType="application/vnd.ms-pki.stl" />
@@ -99,6 +103,7 @@
                 <data android:mimeType="application/octet-stream" />
                 <data android:mimeType="binary/octet-stream" />
                 <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-nightprint-job" />
                 <data android:mimeType="application/x-zip-compressed" />
                 <data android:mimeType="model/stl" />
                 <data android:mimeType="application/vnd.ms-pki.stl" />
