@@ -33,6 +33,13 @@ class NightPrintGcodeAuditTest {
 
     @Test fun acceptsValidTpuSample() = assertTrue(audit(valid).passed)
     @Test fun ignoresUnknownStartupMaterial() = assertTrue(audit(valid).passed)
+    @Test fun acceptsIndentedMetadataComments() {
+        val withWhitespace = valid
+            .replace("; filament_type = TPU", "  ; filament_type = TPU")
+            .replace("; printer_model = Bambu Lab A1 mini", "  ; printer_model = Bambu Lab A1 mini")
+            .replace("; nozzle_temperature_initial_layer = 225", "  ; nozzle_temperature_initial_layer = 225")
+        assertTrue(audit(withWhitespace).passed)
+    }
     @Test fun rejectsPlaInExecutableHeader() {
         val result = audit(valid.replace("M1002 set_filament_type:TPU", "M1002 set_filament_type:PLA"))
         assertFalse(result.passed)
