@@ -6473,9 +6473,60 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // explicitly applies a code in this app session.
                     // Runs BEFORE creating a Bambu upload artifact or showing Print controls.
                     nightPrintExpectedPreset?.let { expected ->
-                        val audit = NightPrintGcodeAudit.inspect(
-                            File(result.gcodePath), expected.material, expected.nozzleC, expected.bedC
+                        val gcodeFile = File(result.gcodePath)
+                        var audit = NightPrintGcodeAudit.inspect(
+                            gcodeFile, expected.material, expected.nozzleC, expected.bedC
                         )
+                        if (NightPrintGcodeAudit.canRequestStartupHeatApproval(audit)) {
+                            val originalSha256 = nightPrintGcodeSha256(gcodeFile)
+                            val decision = CompletableDeferred<Boolean>()
+                            pendingNightPrintHeatDecision = decision
+                            _nightPrintHeatReview.value = NightPrintHeatReview(
+                                material = expected.material,
+                                printNozzleC = expected.nozzleC,
+                                startupPeakC = audit.startupNozzlePeakC!!,
+                                bedC = expected.bedC
+                            )
+                            _state.value = SlicerState.Slicing(maxPct, "Review startup temperature (no printing)")
+                            val approved = try {
+                                withTimeoutOrNull(300_000L) { decision.await() } == true
+                            } finally {
+                                _nightPrintHeatReview.value = null
+                                if (pendingNightPrintHeatDecision === decision) {
+                                    pendingNightPrintHeatDecision = null
+                                }
+                            }
+                            if (!approved) {
+                                diagnostics.recordEvent(
+                                    "night_print_startup_heat_rejected",
+                                    mapOf("approved" to false)
+                                )
+                                diagnostics.clearSliceInProgress()
+                                _state.value = SlicerState.Error(
+                                    "NIGHT PRINT: Startup temperature not approved.\n\n" +
+                                        "No print file released. Return to Prepare to review settings."
+                                )
+                                return@launch
+                            }
+                            if (nightPrintGcodeSha256(gcodeFile) != originalSha256) {
+                                diagnostics.clearSliceInProgress()
+                                _state.value = SlicerState.Error(
+                                    "NIGHT PRINT: G-code changed during review. No print file released."
+                                )
+                                return@launch
+                            }
+                            // Consent does not bypass material, printer, layer or heater limits.
+                            audit = NightPrintGcodeAudit.inspect(
+                                gcodeFile, expected.material, expected.nozzleC, expected.bedC,
+                                startupHeatApproved = true
+                            )
+                            diagnostics.recordEvent(
+                                "night_print_startup_heat_approved",
+                                mapOf("startupPeakC" to audit.startupNozzlePeakC,
+                                      "printNozzleC" to expected.nozzleC,
+                                      "passedAfterReaudit" to audit.passed)
+                            )
+                        }
                         diagnostics.recordEvent(
                             "night_print_gcode_audit",
                             mapOf(
@@ -6490,9 +6541,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         if (!audit.passed) {
                             diagnostics.clearSliceInProgress()
                             _state.value = SlicerState.Error(
-                                "NIGHT PRINT safety check blocked this G-code.\\n\\n" +
-                                    audit.errors.joinToString("\\n") +
-                                    "\\n\\nReview material mapping; do not print this file."
+                                "NIGHT PRINT safety check blocked this G-code.\n\n" +
+                                    audit.errors.joinToString("\n") +
+                                    "\n\nReview material mapping; do not print this file."
                             )
                             return@launch
                         }
