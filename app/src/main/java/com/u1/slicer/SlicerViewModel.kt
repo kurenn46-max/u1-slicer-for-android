@@ -39,6 +39,8 @@ import com.u1.slicer.ui.ObjectSelection
 import com.u1.slicer.data.SessionStateRepository
 import com.u1.slicer.data.SettingsBackup
 import com.u1.slicer.data.SliceConfig
+import com.u1.slicer.data.NightPrintCode
+import com.u1.slicer.data.NightPrintGcodeAudit
 import com.u1.slicer.data.SliceJob
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.SlicingOverrides
@@ -361,6 +363,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _config = MutableStateFlow(SliceConfig())
     val config: StateFlow<SliceConfig> = _config.asStateFlow()
+    /** Enabled only for the settings-code workflow during this app process. */
+    private var nightPrintExpectedPreset: NightPrintCode.Preset? = null
 
     /**
      * H2D source-filament to physical-nozzle preference. Values deliberately
@@ -4622,6 +4626,85 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
         refreshCopyBedWarning()
         _sliceStale.value = true
+    }
+
+
+    /**
+     * Apply a validated NIGHT PRINT code as a local single-filament A1 mini job.
+     * Updates the selected physical slot as well as SliceConfig. Does not send
+     * any commands to the physical printer. Callback runs on the UI thread.
+     */
+    fun applyNightPrintPreset(preset: NightPrintCode.Preset, onResult: (String?) -> Unit) {
+        val activePrinter = activePrinterForSlicing.value
+        if (activePrinter?.kind != com.u1.slicer.data.PrinterKind.BAMBU_LAN ||
+            activePrinter.bambu?.model != com.u1.slicer.data.BambuModel.A1_MINI) {
+            onResult("Select the Bambu Lab A1 mini printer before applying this preset.")
+            return
+        }
+        if (_config.value.extruderCount != 1 || _selectedExtruder.value != 0) {
+            onResult("This experimental code requires a single-filament job using slot 1.")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val printerConfig = printersRepo.config.first()
+                    ?: throw IllegalStateException("No saved printer configuration")
+                val printer = printerConfig.active
+                require(printer.id == activePrinter.id) { "Active printer changed; retry" }
+
+                val nextPresets = printer.extruderPresets.toMutableList()
+                val slot0 = nextPresets.indexOfFirst { it.index == 0 }
+                val newSlot0 = if (slot0 < 0) {
+                    ExtruderPreset(index = 0, materialType = preset.material)
+                } else {
+                    nextPresets[slot0].copy(
+                        materialType = preset.material,
+                        // Old linked PLA/PETG profile must not override new material.
+                        filamentProfileId = null
+                    )
+                }
+                if (slot0 >= 0) nextPresets[slot0] = newSlot0 else nextPresets.add(newSlot0)
+
+                val newConfig = _config.value.copy(
+                    filamentType = preset.material,
+                    nozzleTemp = preset.nozzleC,
+                    bedTemp = preset.bedC,
+                    printSpeed = preset.printMmS,
+                    travelSpeed = preset.travelMmS,
+                    firstLayerSpeed = preset.firstLayerMmS,
+                    retractLength = preset.retractMm,
+                    retractSpeed = preset.retractMmS,
+                    layerHeight = preset.layerMm,
+                    perimeters = preset.wallCount,
+                    fillDensity = preset.infillPercent / 100f,
+                    supportEnabled = preset.support,
+                    brimWidth = preset.brimMm
+                )
+                val newOverrides = slicingOverrides.value.copy(
+                    layerHeight = OverrideValue(OverrideMode.OVERRIDE, preset.layerMm),
+                    wallCount = OverrideValue(OverrideMode.OVERRIDE, preset.wallCount),
+                    infillDensity = OverrideValue(OverrideMode.OVERRIDE, preset.infillPercent / 100f),
+                    sparseInfillSpeed = OverrideValue(OverrideMode.OVERRIDE, preset.infillMmS),
+                    supports = OverrideValue(OverrideMode.OVERRIDE, preset.support),
+                    bedTemp = OverrideValue(OverrideMode.OVERRIDE, preset.bedC),
+                    brimWidth = OverrideValue(OverrideMode.OVERRIDE, preset.brimMm)
+                )
+
+                // Keep the existing profile library intact. All writes remain local.
+                printersRepo.update(printer.copy(extruderPresets = nextPresets.sortedBy { it.index }))
+                settingsRepo.saveSliceConfig(newConfig)
+                settingsRepo.saveSlicingOverrides(newOverrides)
+                _config.value = newConfig
+                setFilamentMaterialOverride(0, preset.material)
+                if (lastModelInfo != null) profileNeedsReEmbed = true
+                _sliceStale.value = true
+                nightPrintExpectedPreset = preset
+                onResult(null)
+            } catch (e: Exception) {
+                onResult(e.message ?: "NIGHT PRINT settings import failed")
+            }
+        }
     }
 
     fun updateConfig(updater: (SliceConfig) -> SliceConfig) {
