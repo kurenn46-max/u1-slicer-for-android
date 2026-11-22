@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -46,6 +47,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.core.content.pm.PackageInfoCompat
 import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.NightPrintJobPackage
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.MixedFilamentDefinitionSource
 import com.u1.slicer.data.MixedFilamentSliceSummary
@@ -72,8 +74,13 @@ import com.u1.slicer.viewer.NativePreviewMesh
 import com.u1.slicer.slice.capabilityProfileFor
 import com.u1.slicer.slice.SlicerTarget
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+
+/** Routes one-file GENESIS jobs away from the general STL/3MF model parser. */
+internal fun isNightPrintJobFilename(filename: String?): Boolean =
+    filename?.trim()?.endsWith(".npjob", ignoreCase = true) == true
 
 internal fun preparePreviewTriangleBudget(hasPaintData: Boolean): Int {
     // Keep the Prepare preview on the higher full-quality budget by default.
@@ -97,6 +104,15 @@ class MainActivity : ComponentActivity() {
     ) { uris ->
         if (uris.isNullOrEmpty()) return@registerForActivityResult
         viewModel.setLoadingFromPicker()
+        if (uris.size == 1) {
+            val selected = uris.first()
+            val name = viewModel.getFileDisplayName(selected)
+                ?: selected.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')
+            if (isNightPrintJobFilename(name)) {
+                importNightPrintJobUri(selected)
+                return@registerForActivityResult
+            }
+        }
         // F77 (GitHub #109): multi-select picker. One file uses the legacy
         // path; many files run through the multi-STL combiner.
         val supportedUris = uris.filter {
@@ -210,7 +226,41 @@ class MainActivity : ComponentActivity() {
         return supported to candidateName
     }
 
+    /**
+     * Share/Open with file manager: an .npjob must enter the GENESIS parser,
+     * not the ordinary 3D model loader. Never automatically prints or uploads.
+     */
+    private fun importNightPrintJobUri(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                val job = withContext(Dispatchers.IO) {
+                    val input = contentResolver.openInputStream(uri)
+                        ?: throw IllegalArgumentException("Could not read NIGHT PRINT job file")
+                    input.use { NightPrintJobPackage.unpack(it, java.io.File(cacheDir, "nightprint_jobs")) }
+                }
+                viewModel.openNightPrintJob(job, autoSlice = false) { error ->
+                    val message = if (error == null)
+                        "NIGHT PRINT job loaded. Review TPU and slice settings before printing."
+                    else "NIGHT PRINT import error: $error"
+                    android.widget.Toast.makeText(this@MainActivity, message, android.widget.Toast.LENGTH_LONG).show()
+                }
+            } catch (t: Exception) {
+                android.widget.Toast.makeText(
+                    this@MainActivity,
+                    "NIGHT PRINT job import error: " + (t.message ?: "invalid package"),
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
     private fun importIncomingModelUri(uri: Uri) {
+        val filename = viewModel.getFileDisplayName(uri)
+            ?: uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')
+        if (isNightPrintJobFilename(filename)) {
+            importNightPrintJobUri(uri)
+            return
+        }
         val (supported, candidateName) = isSupportedIncomingModel(uri)
         val name = candidateName ?: ""
         diagnostics.recordEvent(
