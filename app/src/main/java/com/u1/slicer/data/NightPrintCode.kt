@@ -14,10 +14,13 @@ object NightPrintCode {
         val retractMm: Float, val retractMmS: Float,
         val layerMm: Float, val wallCount: Int,
         val infillPercent: Float, val infillMmS: Int,
-        val support: Boolean, val brimMm: Float
+        val support: Boolean, val brimMm: Float,
+        /** Optional preview colour; this does NOT change the physical spool. */
+        val colorHex: String? = null
     ) {
         fun preview(): String = buildString {
             appendLine("Material: $material | A1 mini (confirm machine selection)")
+            appendLine("Preview filament colour: ${colorHex ?: "Unspecified — check loaded spool"}")
             appendLine("Nozzle: $nozzleC C | Bed: $bedC C")
             appendLine("Outer wall: $printMmS mm/s | Travel: $travelMmS mm/s")
             appendLine("First layer: $firstLayerMmS mm/s | Sparse infill: $infillMmS mm/s")
@@ -33,6 +36,8 @@ object NightPrintCode {
         "infill_percent", "infill_mm_s", "support", "brim_mm"
     )
 
+    private val optional = setOf("color_hex")
+
     fun parse(code: String): Preset {
         require(code.length in 1..4096) { "Code length must be 1..4096" }
         val lines = code.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
@@ -43,11 +48,11 @@ object NightPrintCode {
             val parts = line.split('=', limit = 2).map { it.trim() }
             val key = parts[0]
             val value = parts[1]
-            require(key in required) { "Unsupported key: $key" }
+            require(key in required || key in optional) { "Unsupported key: $key" }
             require(value.isNotEmpty()) { "Blank key: $key" }
             require(fields.putIfAbsent(key, value) == null) { "Duplicate key: $key" }
         }
-        require(fields.keys == required) {
+        require(fields.keys.containsAll(required)) {
             "Missing keys: ${(required - fields.keys).sorted().joinToString()}"
         }
         fun integer(name: String, low: Int, high: Int): Int =
@@ -74,6 +79,11 @@ object NightPrintCode {
                 "TPU preset too aggressive: review speeds/retraction"
             }
         }
+        val colorHex = fields["color_hex"]?.uppercase()?.also { color ->
+            require(Regex("^#[0-9A-F]{6}$").matches(color)) {
+                "color_hex must be #RRGGBB; e.g. #000000 for a black spool"
+            }
+        }
         val support = when (fields.getValue("support")) {
             "true" -> true
             "false" -> false
@@ -84,7 +94,7 @@ object NightPrintCode {
             decimal("travel_mm_s", 10f, 400f), initial, retract, retractSpeed,
             decimal("layer_mm", 0.08f, 0.32f), integer("wall_count", 1, 8),
             decimal("infill_percent", 0f, 100f), infillSpeed, support,
-            decimal("brim_mm", 0f, 20f)
+            decimal("brim_mm", 0f, 20f), colorHex
         )
     }
 }
