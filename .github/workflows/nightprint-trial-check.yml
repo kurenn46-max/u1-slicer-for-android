@@ -12,6 +12,10 @@ on:
       - 'app/src/main/java/com/u1/slicer/SlicerViewModel.kt'
       - '.github/workflows/nightprint-trial-check.yml'
 
+concurrency:
+  group: nightprint-genesis-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
