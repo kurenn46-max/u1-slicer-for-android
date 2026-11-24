@@ -42,6 +42,7 @@ import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.data.NightPrintCode
 import com.u1.slicer.data.NightPrintJobPackage
 import com.u1.slicer.data.NightPrintGcodeAudit
+import com.u1.slicer.data.NightPrintRecipeContract
 import com.u1.slicer.data.SliceJob
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.SlicingOverrides
@@ -5139,6 +5140,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 overrides = slicingOverrides.value,
                 hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
             )
+            // GENESIS recipe values are explicit user intent. Apply them after
+            // imported 3MF process/filament settings and after ordinary overrides,
+            // but never replace target-owned machine macros or geometry.
+            val recipeOverrides = if (sliceTarget == SlicerTarget.BambuA1Mini) {
+                nightPrintExpectedPreset?.let { NightPrintRecipeContract.explicitOverrides(it) }
+                    ?: emptyMap()
+            } else {
+                emptyMap()
+            }
             BambuImportedConfigComposer.compose(
                 target = sliceTarget,
                 sourceConfig = sourceConfig,
@@ -5147,7 +5157,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     "wipe_tower_y" to targeted.wipeTowerY.toString(),
                     "wipe_tower_width" to targeted.wipeTowerWidth.toString(),
                 ),
-                explicitOverrides = explicitBambuOverrides,
+                explicitOverrides = explicitBambuOverrides + recipeOverrides,
             )
         } else {
             null
@@ -6310,10 +6320,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         if (target == SlicerTarget.BambuA1Mini && nightPrintExpectedPreset != null) {
                             // A GENESIS import is an explicit user material/temperature choice.
                             // Never inherit the STL PLA defaults or an embedded 3MF material.
-                            explicitKeys.addAll(listOf(
-                                "filament_type", "nozzle_temperature",
-                                "hot_plate_temp", "textured_plate_temp",
-                            ))
+                            explicitKeys.addAll(
+                                NightPrintRecipeContract.explicitOverrides(
+                                    nightPrintExpectedPreset!!
+                                ).keys
+                            )
                         }
                         explicitKeys.joinToString(separator = "|", prefix = "|", postfix = "|")
                     } else {
@@ -6558,6 +6569,33 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 "NIGHT PRINT safety check blocked this G-code.\n\n" +
                                     audit.errors.joinToString("\n") +
                                     "\n\nReview material mapping; do not print this file."
+                            )
+                            return@launch
+                        }
+                        // A successful heater/material audit is not enough: every
+                        // user-selected recipe value must survive 3MF embedding,
+                        // native slicing, and the exported Orca configuration.
+                        // Physical G1 speeds can be lower due to flow/acceleration;
+                        // compare effective slicer settings, not every motion feed.
+                        val recipeContract = NightPrintRecipeContract.verify(gcodeFile, expected)
+                        diagnostics.recordEvent(
+                            "night_print_recipe_contract",
+                            mapOf(
+                                "passed" to recipeContract.passed,
+                                "mismatches" to recipeContract.mismatches.map {
+                                    mapOf("key" to it.key, "expected" to it.expected, "found" to it.found)
+                                }
+                            )
+                        )
+                        if (!recipeContract.passed) {
+                            diagnostics.clearSliceInProgress()
+                            val mismatches = recipeContract.mismatches.take(8).joinToString("\n") {
+                                "${it.key}: required ${it.expected}, generated ${it.found ?: "MISSING"}"
+                            }
+                            _state.value = SlicerState.Error(
+                                "NIGHT PRINT: Recipe did not fully reach the slicer.\n\n" +
+                                    mismatches +
+                                    "\n\nNo print file released; adjust mapping and re-slice."
                             )
                             return@launch
                         }
