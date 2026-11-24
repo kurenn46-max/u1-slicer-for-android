@@ -140,6 +140,8 @@ SliceConfig configFromJava(JNIEnv* env, jobject jconfig) {
     config.machine_change_filament_gcode = getString("machineChangeFilamentGcode");
     config.machine_target = getString("machineTarget");
     config.bambu_explicit_overrides = getString("bambuExplicitOverrides");
+    config.night_print_sparse_infill_speed = getFloat("nightPrintSparseInfillSpeed");
+    config.night_print_filament_color = getString("nightPrintFilamentColor");
 
     // F91: per-extruder filament tuning from the user's filament library.
     config.filament_flow_ratios = getFloatArray("filamentFlowRatios");
