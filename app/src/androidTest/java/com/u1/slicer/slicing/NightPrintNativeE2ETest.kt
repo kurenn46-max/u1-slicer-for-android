@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.NativeLibrary
 import com.u1.slicer.bambu.resolveTargetedSliceConfig
+import com.u1.slicer.bambu.BambuImportedConfigComposer
 import com.u1.slicer.data.NightPrintGcodeAudit
 import com.u1.slicer.data.NightPrintRecipeContract
 import com.u1.slicer.data.NightPrintJobPackage
@@ -160,11 +161,14 @@ class NightPrintNativeE2ETest {
                 filamentNozzleTempInitialLayers = intArrayOf(p.nozzleC),
                 filamentBedTempInitialLayers = intArrayOf(p.bedC),
                 filamentMaxVolumetricSpeeds = floatArrayOf(2.0f),
-                // The app marks these as explicitly selected when applying .npjob.
-                // Without these flags the Bambu STL PLA/220C baseline may win.
+                // The test must pass the ENTIRE imported recipe through JNI,
+                // exactly as the app does, not a partial set of flags.
+                nightPrintSparseInfillSpeed = p.infillMmS.toFloat(),
+                nightPrintFilamentColor = p.colorHex.orEmpty(),
                 bambuExplicitOverrides =
-                    "|filament_type|nozzle_temperature|hot_plate_temp|textured_plate_temp|" +
-                    "layer_height|wall_loops|sparse_infill_density|enable_support|brim_width|"
+                    NightPrintRecipeContract.explicitOverrides(p).keys.joinToString(
+                        separator = "|", prefix = "|", postfix = "|"
+                    )
             )
         )
         assertEquals("BAMBU_A1_MINI", config.machineTarget)
@@ -312,22 +316,12 @@ class NightPrintNativeE2ETest {
         val embedder = com.u1.slicer.bambu.ProfileEmbedder(
             InstrumentationRegistry.getInstrumentation().targetContext
         )
-        val filamentSettings: Map<String, Any> = mapOf(
-            "filament_type" to mutableListOf("TPU"),
-            "filament_colour" to mutableListOf("#000000"),
-            "nozzle_temperature" to mutableListOf("225"),
-            "nozzle_temperature_initial_layer" to mutableListOf("225"),
-            "hot_plate_temp" to mutableListOf("50"),
-            "hot_plate_temp_initial_layer" to mutableListOf("50"),
-            "textured_plate_temp" to mutableListOf("50"),
-            "textured_plate_temp_initial_layer" to mutableListOf("50"),
-            "filament_max_volumetric_speed" to mutableListOf("2.0")
-        )
-        val embeddedConfig = embedder.buildConfig(
-            info = info,
-            filamentSettings = filamentSettings,
-            targetExtruderCount = 1
-        )
+        // This reproduces the real A1 mini targeting layer rather than
+        // trusting ProfileEmbedder's historical Snapmaker/U1 default stack.
+        val embeddedConfig = BambuImportedConfigComposer.compose(
+            target = SlicerTarget.BambuA1Mini,
+            explicitOverrides = NightPrintRecipeContract.explicitOverrides(job.preset),
+        ).config
         assertEquals(listOf("TPU"), embeddedConfig["filament_type"])
         val embedded = embedder.embed(job.model, embeddedConfig, dir, info)
         assertTrue("Native cannot load TPU-profile-embedded generic 3MF",
@@ -344,10 +338,24 @@ class NightPrintNativeE2ETest {
                 layerHeight = p.layerMm,
                 firstLayerHeight = p.layerMm,
                 printSpeed = p.printMmS,
+                travelSpeed = p.travelMmS,
                 firstLayerSpeed = p.firstLayerMmS,
+                retractLength = p.retractMm,
+                retractSpeed = p.retractMmS,
+                perimeters = p.wallCount,
+                fillDensity = p.infillPercent / 100f,
+                supportEnabled = p.support,
+                brimWidth = p.brimMm,
+                extruderTemps = intArrayOf(p.nozzleC),
+                filamentNozzleTempInitialLayers = intArrayOf(p.nozzleC),
+                filamentBedTempInitialLayers = intArrayOf(p.bedC),
                 filamentMaxVolumetricSpeeds = floatArrayOf(2.0f),
-                bambuExplicitOverrides =
-                    "|filament_type|nozzle_temperature|hot_plate_temp|textured_plate_temp|"
+                nightPrintSparseInfillSpeed = p.infillMmS.toFloat(),
+                nightPrintFilamentColor = p.colorHex.orEmpty(),
+                bambuExplicitOverrides = 
+                    NightPrintRecipeContract.explicitOverrides(p).keys.joinToString(
+                        separator = "|", prefix = "|", postfix = "|"
+                    )
             )
         )
         val result = native.slice(config)
