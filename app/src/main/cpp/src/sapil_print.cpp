@@ -343,6 +343,9 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
         Slic3r::ForwardCompatibilitySubstitutionRule::Disable};
     if (explicitly_overrides("layer_height") && config.layer_height > 0.0f)
         dpc.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(config.layer_height));
+    if (explicitly_overrides("initial_layer_print_height") && config.first_layer_height > 0.0f)
+        dpc.set_key_value("initial_layer_print_height",
+            new Slic3r::ConfigOptionFloat(config.first_layer_height));
     if (explicitly_overrides("wall_loops"))
         dpc.set_key_value("wall_loops", new Slic3r::ConfigOptionInt(config.perimeters));
     if (explicitly_overrides("top_shell_layers"))
