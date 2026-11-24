@@ -368,10 +368,21 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     if (explicitly_overrides("skirt_loops"))
         dpc.set_key_value("skirt_loops", new Slic3r::ConfigOptionInt(config.skirt_loops));
     if (explicitly_overrides("hot_plate_temp") || explicitly_overrides("textured_plate_temp")) {
-        dpc.set_key_value("hot_plate_temp", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
-        dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
-        dpc.set_key_value("textured_plate_temp", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
-        dpc.set_key_value("textured_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
+        // GENESIS supplies a job-local, explicitly selected bed temperature.
+        // Orca picks its heater target from the *active* curr_bed_type.  If we
+        // only override hot/textured plate keys, a plain STL or embedded 3MF
+        // whose active plate maps to cool_plate_temp can silently emit 35 C
+        // even though the user chose 50 C.  Preserve the existing plate type
+        // but apply the explicit temperature to all three supported families,
+        // including their first-layer variants.  Do not do this for ordinary
+        // imported Bambu jobs without an explicit bed-temperature override.
+        const std::vector<int> selected_bed(n_ext, config.bed_temp);
+        dpc.set_key_value("hot_plate_temp", new Slic3r::ConfigOptionInts(selected_bed));
+        dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(selected_bed));
+        dpc.set_key_value("cool_plate_temp", new Slic3r::ConfigOptionInts(selected_bed));
+        dpc.set_key_value("cool_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(selected_bed));
+        dpc.set_key_value("textured_plate_temp", new Slic3r::ConfigOptionInts(selected_bed));
+        dpc.set_key_value("textured_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(selected_bed));
     }
     if (explicitly_overrides("nozzle_temperature") &&
         (!config.extruder_temps.empty() || n_ext == 1)) {
