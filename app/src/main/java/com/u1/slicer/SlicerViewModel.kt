@@ -4774,6 +4774,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     retractLength = preset.retractMm,
                     retractSpeed = preset.retractMmS,
                     layerHeight = preset.layerMm,
+                    // The recipe defines both normal and initial layer height.
+                    // Preserve it as a JNI field as well as embedded 3MF metadata.
+                    firstLayerHeight = preset.layerMm,
                     perimeters = preset.wallCount,
                     fillDensity = preset.infillPercent / 100f,
                     supportEnabled = preset.support,
