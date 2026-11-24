@@ -118,6 +118,26 @@ class NightPrintRecipeContractTest {
         assertFalse(check(correct + "\n; retraction_length = 0.8\n").passed)
     }
 
+    @Test fun spoofedMetadataCannotHideActualWrongRetractionCommands() {
+        val declaredCorrectly = metadata(NightPrintRecipeContract.explicitOverrides(recipe))
+        val result = check(
+            declaredCorrectly + "\n;LAYER_CHANGE\nG1 E-.8 F1800\n" +
+                "; stop printing object TEST id:0 copy 0\n"
+        )
+        assertFalse(result.passed)
+        assertTrue(result.mismatches.any { it.key == "actual_print_retractions" })
+    }
+
+    @Test fun properPrintPhaseRetractionAndStartupPurgeAreDistinguished() {
+        val declaredCorrectly = metadata(NightPrintRecipeContract.explicitOverrides(recipe))
+        val result = check(
+            "G1 E-3 F2400 ; startup purge retract\n" +
+                declaredCorrectly + "\n;LAYER_CHANGE\nG1 E-0.5 F1500\n" +
+                "; stop printing object TEST id:0 copy 0\nG1 E-2 F1200\n"
+        )
+        assertTrue(result.passed)
+    }
+
     @Test fun noMaterialColorStillDoesNotAssumeBlack() {
         val withoutColor = NightPrintCode.parse(code.replace("color_hex=#000000", ""))
         assertFalse("filament_colour" in NightPrintRecipeContract.explicitOverrides(withoutColor))
