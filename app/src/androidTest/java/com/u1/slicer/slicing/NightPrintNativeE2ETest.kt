@@ -9,6 +9,7 @@ import com.u1.slicer.data.NightPrintGcodeAudit
 import com.u1.slicer.data.NightPrintJobPackage
 import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.slice.SlicerTarget
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.*
@@ -44,6 +45,57 @@ class NightPrintNativeE2ETest {
     @After fun teardown() {
         native.clearModel()
         dir.deleteRecursively()
+    }
+
+    /**
+     * Persist real generated G-code evidence *before* an assertion can fail.
+     * Otherwise a material/bed mismatch loses its evidence, and CI only gets
+     * the assertion text.  No G-code is executed or sent to a printer here.
+     * These tests use synthetic geometry, never the user's private models.
+     */
+    private fun recordNativeSliceDiagnostics(
+        gcode: File,
+        reportName: String,
+        expectedMaterial: String,
+        nozzleC: Int,
+        bedC: Int
+    ) {
+        val audit = NightPrintGcodeAudit.inspect(gcode, expectedMaterial, nozzleC, bedC)
+        val relevant = gcode.useLines { lines ->
+            lines.map(String::trim).filter { line ->
+                line.startsWith("M104 ", true) ||
+                    line.startsWith("M109 ", true) ||
+                    line.startsWith("M140 ", true) ||
+                    line.startsWith("M190 ", true) ||
+                    line.startsWith("M1002 ", true) ||
+                    line.startsWith("; filament_type", true) ||
+                    line.startsWith("; printer_model", true) ||
+                    line.startsWith("; nozzle_temperature_initial_layer", true)
+            }.take(80).toList()
+        }
+        val evidence = JSONObject().apply {
+            put("type", "pre_assertion_native_gcode_diagnostics")
+            put("expectedMaterial", expectedMaterial)
+            put("observedMaterials", JSONArray(audit.recognizedMaterials.sorted()))
+            put("expectedNozzleC", nozzleC)
+            put("observedInitialNozzleC", audit.initialNozzleC)
+            put("expectedBedC", bedC)
+            put("observedBedCommandsC", JSONArray(audit.bedCommandsC.sorted()))
+            put("printerModel", audit.printerModel)
+            put("errors", JSONArray(audit.errors))
+            put("warnings", JSONArray(audit.warnings))
+            put("startupHeatApprovalPossible", NightPrintGcodeAudit.canRequestStartupHeatApproval(audit))
+            put("gcodeBytes", gcode.length())
+            put("relevantCommands", JSONArray(relevant))
+            put("status", if (audit.passed) "PASS" else "FAIL_OR_REVIEW")
+        }.toString(2)
+        File(
+            InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null),
+            reportName
+        ).writeText(evidence)
+        Log.i("NIGHTPRINT_E2E", "G-code diagnostic " + reportName +
+            ": " + audit.errors.joinToString("; ") +
+            "; material=" + audit.recognizedMaterials + "; bed=" + audit.bedCommandsC)
     }
 
     @Test fun tpuNpjobSlicesWithRealNativeEngineAndRejectsBadGcode() {
@@ -123,6 +175,9 @@ class NightPrintNativeE2ETest {
         val generatedFile = File(result.gcodePath)
         assertTrue("No actual G-code produced", generatedFile.isFile && generatedFile.length() > 1000L)
         val generated = generatedFile.readText()
+        recordNativeSliceDiagnostics(
+            generatedFile, "nightprint-native-e2e-report.json", "TPU", 225, 50
+        )
         assertTrue(generated.contains("; printer_model = Bambu Lab A1 mini"))
         assertTrue(generated.contains(";LAYER_CHANGE"))
         assertTrue(
@@ -293,6 +348,9 @@ class NightPrintNativeE2ETest {
         assertTrue("Native 3MF slice failed: ${result!!.errorMessage}", result.success)
         val out = File(result.gcodePath)
         assertTrue("No real 3MF G-code generated", out.isFile && out.length() > 1000)
+        recordNativeSliceDiagnostics(
+            out, "nightprint-3mf-profile-e2e-report.json", "TPU", 225, 50
+        )
         val initial = NightPrintGcodeAudit.inspect(out, "TPU", 225, 50)
         assertEquals("Profile embedding did not preserve TPU in generated G-code",
             setOf("TPU"), initial.recognizedMaterials)
