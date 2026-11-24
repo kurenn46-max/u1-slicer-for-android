@@ -6311,6 +6311,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // see the C-1 part-B concern in the branch report re: the native engine
                     // deriving num_physical from filament_diameter.size() (= 4 + nMix).
                     mixedFilamentDefinitions = mixedFilamentDefinitions,
+                    // Explicit NIGHT PRINT values missing from the legacy JNI
+                    // interface. Without these, the native engine silently
+                    // falls back to the incoming 3MF/PLA process profile.
+                    nightPrintSparseInfillSpeed =
+                        if (target == SlicerTarget.BambuA1Mini)
+                            nightPrintExpectedPreset?.infillMmS?.toFloat() ?: -1f
+                        else -1f,
+                    nightPrintFilamentColor =
+                        if (target == SlicerTarget.BambuA1Mini)
+                            nightPrintExpectedPreset?.colorHex.orEmpty()
+                        else "",
                     bambuExplicitOverrides = if (target != SlicerTarget.SnapmakerU1) {
                         val explicitKeys = buildExplicitBambuProfileOverrides(
                             profileOverrides = profileOverrides,
