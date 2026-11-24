@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.NativeLibrary
 import com.u1.slicer.bambu.resolveTargetedSliceConfig
 import com.u1.slicer.data.NightPrintGcodeAudit
+import com.u1.slicer.data.NightPrintRecipeContract
 import com.u1.slicer.data.NightPrintJobPackage
 import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.slice.SlicerTarget
@@ -185,6 +186,12 @@ class NightPrintNativeE2ETest {
             Regex("""(?m)^G1[^\r\n]*\bE-?\d""").containsMatchIn(generated)
         )
 
+        val realRecipe = NightPrintRecipeContract.verify(generatedFile, job.preset)
+        assertTrue(
+            "Real STL G-code did not preserve the requested one-click recipe: " +
+                realRecipe.mismatches.joinToString("; "),
+            realRecipe.passed
+        )
         val initial = NightPrintGcodeAudit.inspect(generatedFile, "TPU", 225, 50)
         assertEquals("Native output must declare TPU", setOf("TPU"), initial.recognizedMaterials)
         assertTrue(
@@ -350,6 +357,12 @@ class NightPrintNativeE2ETest {
         assertTrue("No real 3MF G-code generated", out.isFile && out.length() > 1000)
         recordNativeSliceDiagnostics(
             out, "nightprint-3mf-profile-e2e-report.json", "TPU", 225, 50
+        )
+        val realRecipe = NightPrintRecipeContract.verify(out, job.preset)
+        assertTrue(
+            "Embedded 3MF native G-code did not preserve the requested recipe: " +
+                realRecipe.mismatches.joinToString("; "),
+            realRecipe.passed
         )
         val initial = NightPrintGcodeAudit.inspect(out, "TPU", 225, 50)
         assertEquals("Profile embedding did not preserve TPU in generated G-code",
