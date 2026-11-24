@@ -62,7 +62,7 @@ class NightPrintNativeE2ETest {
     ) {
         val audit = NightPrintGcodeAudit.inspect(gcode, expectedMaterial, nozzleC, bedC)
         val relevant = gcode.useLines { lines ->
-            lines.map(String::trim).filter { line ->
+            lines.map { it.trim() }.filter { line ->
                 line.startsWith("M104 ", true) ||
                     line.startsWith("M109 ", true) ||
                     line.startsWith("M140 ", true) ||
