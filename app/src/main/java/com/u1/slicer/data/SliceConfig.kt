@@ -78,6 +78,11 @@ data class SliceConfig(
     // slicing uses this to distinguish UI intent from inherited U1-shaped
     // scalar defaults, especially for geometry-only STL input.
     @JvmField var bambuExplicitOverrides: String = "",
+    // GENESIS-only explicit process/preview values not covered by the older JNI
+    // scalar interface. Sent only for a validated one-file A1 mini recipe.
+    // -1 means "not set", so existing U1/Bambu workflows remain unchanged.
+    @JvmField var nightPrintSparseInfillSpeed: Float = -1f,
+    @JvmField var nightPrintFilamentColor: String = "",
 
     // F91 (2026-05-25): per-extruder filament tuning sourced from the user's filament
     // library at slice time. Empty array = "user hasn't set this — let the
