@@ -353,6 +353,36 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
         dpc.set_key_value("sparse_infill_density", new Slic3r::ConfigOptionPercent(config.fill_density * 100.0));
     if (explicitly_overrides("sparse_infill_pattern"))
         dpc.set_deserialize("sparse_infill_pattern", config.fill_pattern, bambu_substitutions);
+    // User-selected NIGHT PRINT settings must survive embedded 3MF profiles.
+    // Do not apply U1 scalar defaults to normal Bambu imports: only an
+    // explicitly selected key can overwrite the incoming native configuration.
+    if (explicitly_overrides("outer_wall_speed"))
+        dpc.set_key_value("outer_wall_speed", new Slic3r::ConfigOptionFloat(config.print_speed));
+    if (explicitly_overrides("travel_speed"))
+        dpc.set_key_value("travel_speed", new Slic3r::ConfigOptionFloat(config.travel_speed));
+    if (explicitly_overrides("initial_layer_speed"))
+        dpc.set_key_value("initial_layer_speed", new Slic3r::ConfigOptionFloat(config.first_layer_speed));
+    if (explicitly_overrides("initial_layer_infill_speed"))
+        dpc.set_key_value("initial_layer_infill_speed", new Slic3r::ConfigOptionFloat(config.first_layer_speed));
+    if (explicitly_overrides("sparse_infill_speed") && config.night_print_sparse_infill_speed > 0.0f)
+        dpc.set_key_value("sparse_infill_speed",
+            new Slic3r::ConfigOptionFloat(config.night_print_sparse_infill_speed));
+    if (explicitly_overrides("retraction_length"))
+        dpc.set_key_value("retraction_length",
+            new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.retract_length)));
+    if (explicitly_overrides("retraction_speed"))
+        dpc.set_key_value("retraction_speed",
+            new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.retract_speed)));
+    // Physical filament colour cannot be controlled by software; this is
+    // preview metadata only.  The NIGHT PRINT code parser validates #RRGGBB.
+    if (explicitly_overrides("filament_colour") &&
+        config.night_print_filament_color.size() == 7 &&
+        config.night_print_filament_color[0] == '#') {
+        dpc.set_key_value("filament_colour",
+            new Slic3r::ConfigOptionStrings(std::vector<std::string>(
+                n_ext, config.night_print_filament_color)));
+    }
+
     if (explicitly_overrides("enable_support"))
         dpc.set_key_value("enable_support", new Slic3r::ConfigOptionBool(config.support_enabled));
     if (explicitly_overrides("support_type"))
