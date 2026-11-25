@@ -1,0 +1,20 @@
+name: REA preflight
+on:
+  push:
+    branches: [experiment/nightprint-autonomous-loop-v1]
+    paths: [tools/nightcore/rea-request.txt]
+permissions:
+  contents: read
+concurrency:
+  group: rea-preflight
+  cancel-in-progress: true
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Inspect package metadata without executing package code
+        run: |
+          node --version
+          npm --version
+          npm view rea-agents name version repository license engines dependencies --json --fetch-retries=0 --fetch-timeout=30000
