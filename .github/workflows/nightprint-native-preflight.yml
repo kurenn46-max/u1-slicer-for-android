@@ -1,0 +1,51 @@
+name: NIGHT PRINT native rebuild preflight
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nightprint-native-preflight.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: Inventory source and dependency inputs (no full build)
+        run: |
+          set -euo pipefail
+          mkdir -p native-preflight
+          git rev-parse HEAD > native-preflight/source.txt
+          git submodule status --recursive > native-preflight/submodules.txt
+          git diff --name-only origin/main HEAD -- app/src/main/cpp app/src/main/jniLibs > native-preflight/native-diff.txt || true
+          sha256sum app/src/main/jniLibs/arm64-v8a/*.so > native-preflight/existing-so-sha256.txt
+          sha256sum scripts/build_deps.sh scripts/rebuild-native-so.sh app/src/main/cpp/CMakeLists.txt > native-preflight/build-inputs.txt
+          grep -nE 'git clone|wget|curl|--boost=' scripts/build_deps.sh > native-preflight/dependency-sources.txt
+          python3 - <<'PY'
+          import json,pathlib
+          root=pathlib.Path("app/src/main/cpp/extern")
+          deps=["boost","eigen","tbb","cgal","gmp","mpfr","occt","clipper2","cereal","nlohmann","zlib","expat"]
+          inventory={n:{"headers":sum(1 for p in (root/n/"include").rglob("*") if p.is_file()),"arm64_archives":len(list((root/n/"lib/arm64-v8a").glob("*.a")))} for n in deps}
+          pathlib.Path("native-preflight/dependencies.json").write_text(json.dumps(inventory,indent=2))
+          print(json.dumps(inventory,indent=2))
+          PY
+          for f in app/src/main/jniLibs/arm64-v8a/*.so; do
+            readelf -h -lW "$f" > "native-preflight/$(basename "$f").elf.txt"
+          done
+          git ls-files app/src/main/cpp/extern > native-preflight/tracked-extern.txt
+          df -h > native-preflight/disk.txt
+          free -h > native-preflight/memory.txt
+          cmake --version > native-preflight/cmake.txt
+          ninja --version > native-preflight/ninja.txt
+          ls "$ANDROID_HOME/ndk" > native-preflight/available-ndk.txt || true
+          echo "Inventory only. Missing dependencies and unpinned sources are blockers, not a build pass."
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-rebuild-preflight
+          path: native-preflight/
+          retention-days: 3
