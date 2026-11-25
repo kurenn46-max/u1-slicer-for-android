@@ -1,0 +1,69 @@
+name: NIGHT PRINT bounded autonomous QA pilot
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: nightprint-autonomous-pilot-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  pilot:
+    if: github.ref == 'refs/heads/experiment/nightprint-autonomous-loop-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Bounded QA loop (no source changes or release)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p qa-loop
+          printf 'commit=%s\n' "$GITHUB_SHA" > qa-loop/checkpoint.txt
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+          result=1
+          for attempt in 1 2 3; do
+            log="qa-loop/attempt-${attempt}.log"
+            set +e
+            timeout 360 bash ./gradlew --no-daemon testDebugUnitTest > "$log" 2>&1
+            result=$?
+            set -e
+            printf 'attempt=%s exit=%s\n' "$attempt" "$result" >> qa-loop/checkpoint.txt
+            if [ "$result" -eq 0 ]; then
+              echo 'JVM_PASS_ONLY; native and physical gates remain required' >> qa-loop/checkpoint.txt
+              break
+            fi
+            if [ "$result" -eq 124 ]; then
+              echo 'TIME_BUDGET; hand off to next developer run' >> qa-loop/checkpoint.txt
+              break
+            fi
+            if grep -Eiq 'tests? failed|compilation error|^e: |assertionerror|execution failed for task.*testDebugUnitTest' "$log"; then
+              echo 'DETERMINISTIC_FAILURE; repair required before retry' >> qa-loop/checkpoint.txt
+              break
+            fi
+            if ! grep -Eiq 'connection reset|read timed out|temporary failure in name resolution|HTTP (502|503|504)|status code (502|503|504)' "$log"; then
+              echo 'UNCLASSIFIED_FAILURE; review required' >> qa-loop/checkpoint.txt
+              break
+            fi
+            echo 'TRANSIENT_FAILURE; bounded retry' >> qa-loop/checkpoint.txt
+            if [ "$attempt" -lt 3 ]; then sleep 15; fi
+          done
+          cat qa-loop/checkpoint.txt >> "$GITHUB_STEP_SUMMARY"
+          exit "$result"
+      - name: Preserve evidence for next developer run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightprint-loop-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            qa-loop/
+            app/build/test-results/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 7
