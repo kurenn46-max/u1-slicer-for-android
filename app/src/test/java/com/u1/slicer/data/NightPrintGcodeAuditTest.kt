@@ -167,4 +167,42 @@ class NightPrintGcodeAuditTest {
     }
 
     @Test fun rejectsEmptyGcode() = assertFalse(audit("").passed)
+    private val petg = valid.replace("TPU", "PETG").replace("225", "235").replace("S50", "S65")
+    private fun petgAudit(code: String, approved: Boolean = false) =
+        NightPrintGcodeAudit.inspect(temp(code), "PETG", 235, 65, approved)
+    private val petgPurge = petg.replace(";LAYER_CHANGE",
+        "M104 S250\nM109 S250\nM104 S240\nM109 S235\n;LAYER_CHANGE")
+
+    @Test fun petg235PurgeRequiresExplicitReviewAndReturnToTarget() {
+        val pending = petgAudit(petgPurge)
+        assertFalse(pending.passed)
+        assertTrue(NightPrintGcodeAudit.canRequestStartupHeatApproval(pending))
+        assertTrue(petgAudit(petgPurge, true).passed)
+    }
+    @Test fun petgRejectsPurgeWithoutReturnEvenWithConsent() {
+        val bad = petgPurge.replace("M109 S235\n;LAYER_CHANGE", ";LAYER_CHANGE")
+        assertFalse(petgAudit(bad, true).passed)
+        assertFalse(NightPrintGcodeAudit.canRequestStartupHeatApproval(petgAudit(bad)))
+    }
+    @Test fun petgRejectsHeatingAgainAfterReturn() {
+        val bad = petgPurge.replace(";LAYER_CHANGE", "M104 S240\n;LAYER_CHANGE")
+        assertFalse(petgAudit(bad, true).passed)
+    }
+    @Test fun petgRejectsUnknownStartupHeatAndAboveCeiling() {
+        for (badTemp in listOf(245, 251, 270)) {
+            val bad = petgPurge.replace("M104 S250", "M104 S" + badTemp)
+            assertFalse(petgAudit(bad, true).passed)
+            assertFalse(NightPrintGcodeAudit.canRequestStartupHeatApproval(petgAudit(bad)))
+        }
+    }
+    @Test fun petgRejectsLayerOverheatEvenWithConsent() {
+        assertFalse(petgAudit(petgPurge + "\nM104 T0 S240", true).passed)
+    }
+    @Test fun petgRejectsWrongMaterialBedAndMachineEvenWithConsent() {
+        for (bad in listOf(petgPurge.replace("PETG", "PLA"),
+            petgPurge.replace("S65","S75"),
+            petgPurge.replace("Bambu Lab A1 mini","Bambu Lab A1"))) {
+            assertFalse(petgAudit(bad, true).passed)
+        }
+    }
 }

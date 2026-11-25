@@ -55,6 +55,8 @@ object NightPrintGcodeAudit {
         val layerNozzles = mutableSetOf<Int>()
         var expectedNozzleCommandFound = false
         var layerStarted = false
+        var startupLastNozzleTarget: Int? = null
+        var startupReturnedToTargetWithWait = false
 
         val materialCommand = Regex("^\\s*M1002\\s+set_filament_type:([A-Za-z0-9_]+)", RegexOption.IGNORE_CASE)
         val materialMeta = Regex("^\\s*;\\s*filament_type\\s*=\\s*(.*)", RegexOption.IGNORE_CASE)
@@ -97,6 +99,11 @@ object NightPrintGcodeAudit {
                             if (celsius != 0) beds.add(celsius)
                         } else {
                             if (celsius == nozzleC) expectedNozzleCommandFound = true
+                            if (!layerStarted) {
+                                startupLastNozzleTarget = celsius
+                                if (celsius > nozzleC) startupReturnedToTargetWithWait = false
+                                if (type == "109" && celsius == nozzleC) startupReturnedToTargetWithWait = true
+                            }
                             if (celsius > 0) {
                                 if (layerStarted) layerNozzles.add(celsius) else startupNozzles.add(celsius)
                             }
@@ -123,12 +130,20 @@ object NightPrintGcodeAudit {
         val overLayer = layerNozzles.filter { it > nozzleC }
         if (overLayer.isNotEmpty()) errors.add("High nozzle temperature AFTER layer start: " + overLayer.sorted())
 
-        // TPU startup purging can legitimately use up to 250 C (depending on the
-        // machine's own startup G-code). Allow this only with explicit approval.
-        // Other/unknown startup heating remains blocked.
+        // Machine startup purging is distinct from layer temperature.
+        // Elevated heat always requires explicit approval.
         val highStartup = startupNozzles.filter { it > nozzleC }
-        val ceiling = if (expectedMaterial == "TPU") 250 else nozzleC
-        val beyondCeiling = highStartup.filter { it > ceiling }
+        // Narrow PETG 235 C recipe exception for the A1 mini's 240/250 C
+        // startup purge. It is a review gate, NOT a new print temperature.
+        // Do not accept arbitrary elevated temperatures or a purge that has
+        // not returned to the selected target before the first layer.
+        val petgPurgeRecipe = expectedMaterial == "PETG" && nozzleC == 235
+        val ceiling = if (expectedMaterial == "TPU" || petgPurgeRecipe) 250 else nozzleC
+        val beyondCeiling = highStartup.filter { it > ceiling || (petgPurgeRecipe && it !in setOf(240, 250)) }
+        if (petgPurgeRecipe && highStartup.isNotEmpty() &&
+            (!startupReturnedToTargetWithWait || startupLastNozzleTarget != nozzleC)) {
+            errors.add("PETG startup purge did not return to 235 C with M109 before layer start")
+        }
         if (beyondCeiling.isNotEmpty()) {
             errors.add("Startup nozzle exceeds material cap $ceiling C: " + beyondCeiling.sorted())
         }
