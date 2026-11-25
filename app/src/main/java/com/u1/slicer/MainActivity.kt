@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -46,6 +47,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.core.content.pm.PackageInfoCompat
 import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.NightPrintJobPackage
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.MixedFilamentDefinitionSource
 import com.u1.slicer.data.MixedFilamentSliceSummary
@@ -72,8 +74,13 @@ import com.u1.slicer.viewer.NativePreviewMesh
 import com.u1.slicer.slice.capabilityProfileFor
 import com.u1.slicer.slice.SlicerTarget
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+
+/** Routes one-file GENESIS jobs away from the general STL/3MF model parser. */
+internal fun isNightPrintJobFilename(filename: String?): Boolean =
+    filename?.trim()?.endsWith(".npjob", ignoreCase = true) == true
 
 internal fun preparePreviewTriangleBudget(hasPaintData: Boolean): Int {
     // Keep the Prepare preview on the higher full-quality budget by default.
@@ -97,6 +104,15 @@ class MainActivity : ComponentActivity() {
     ) { uris ->
         if (uris.isNullOrEmpty()) return@registerForActivityResult
         viewModel.setLoadingFromPicker()
+        if (uris.size == 1) {
+            val selected = uris.first()
+            val name = viewModel.getFileDisplayName(selected)
+                ?: selected.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')
+            if (isNightPrintJobFilename(name)) {
+                importNightPrintJobUri(selected)
+                return@registerForActivityResult
+            }
+        }
         // F77 (GitHub #109): multi-select picker. One file uses the legacy
         // path; many files run through the multi-STL combiner.
         val supportedUris = uris.filter {
@@ -165,7 +181,7 @@ class MainActivity : ComponentActivity() {
         val summary = viewModel.buildModelDebugSummary() ?: return
         val clipboard = getSystemService(android.content.ClipboardManager::class.java)
         clipboard.setPrimaryClip(
-            android.content.ClipData.newPlainText("Your One Slicer Model Debug Summary", summary)
+            android.content.ClipData.newPlainText("NIGHT PRINT GENESIS Model Debug Summary", summary)
         )
         android.widget.Toast.makeText(this, "Debug summary copied", android.widget.Toast.LENGTH_SHORT).show()
     }
@@ -210,7 +226,41 @@ class MainActivity : ComponentActivity() {
         return supported to candidateName
     }
 
+    /**
+     * Share/Open with file manager: an .npjob must enter the GENESIS parser,
+     * not the ordinary 3D model loader. Never automatically prints or uploads.
+     */
+    private fun importNightPrintJobUri(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                val job = withContext(Dispatchers.IO) {
+                    val input = contentResolver.openInputStream(uri)
+                        ?: throw IllegalArgumentException("Could not read NIGHT PRINT job file")
+                    input.use { NightPrintJobPackage.unpack(it, java.io.File(cacheDir, "nightprint_jobs")) }
+                }
+                viewModel.openNightPrintJob(job, autoSlice = false) { error ->
+                    val message = if (error == null)
+                        "NIGHT PRINT job loaded. Review TPU and slice settings before printing."
+                    else "NIGHT PRINT import error: $error"
+                    android.widget.Toast.makeText(this@MainActivity, message, android.widget.Toast.LENGTH_LONG).show()
+                }
+            } catch (t: Exception) {
+                android.widget.Toast.makeText(
+                    this@MainActivity,
+                    "NIGHT PRINT job import error: " + (t.message ?: "invalid package"),
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
     private fun importIncomingModelUri(uri: Uri) {
+        val filename = viewModel.getFileDisplayName(uri)
+            ?: uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')
+        if (isNightPrintJobFilename(filename)) {
+            importNightPrintJobUri(uri)
+            return
+        }
         val (supported, candidateName) = isSupportedIncomingModel(uri)
         val name = candidateName ?: ""
         diagnostics.recordEvent(
@@ -1950,7 +2000,7 @@ fun PrepareScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Your One Slicer", fontWeight = FontWeight.Bold)
+                        Text(androidx.compose.ui.res.stringResource(R.string.app_name), fontWeight = FontWeight.Bold)
                         Text(
                             "☕ Support development",
                             style = MaterialTheme.typography.labelSmall,
@@ -2163,6 +2213,18 @@ fun PrepareScreen(
                             val targetMachineConfig = resolveTargetedSliceConfig(
                                 viewModel.effectiveSliceTarget.value,
                                 config,
+                            )
+                            // The displayed bed dimensions are derived from the SAME target
+                            // resolver used by the slicer, not the connected printer camera.
+                            val profileTarget = viewModel.effectiveSliceTarget.value
+                            val profileName = if (profileTarget == SlicerTarget.BambuA1Mini)
+                                "Bambu Lab A1 mini" else profileTarget.toString()
+                            Text(
+                                "Slicing machine: $profileName  |  Bed: " +
+                                    "${targetMachineConfig.bedSizeX.toInt()} × " +
+                                    "${targetMachineConfig.bedSizeY.toInt()} mm",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             InlineModelPreview(
                                 modelFilePath = modelPath,
@@ -2620,7 +2682,7 @@ private fun MakerWorldModeDialog(onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.titleSmall
                 )
                 Text(
-                    "Best for signed-in browsing. Google login works here, and it is the most reliable way to download a 3MF/STL or share a MakerWorld model link back to Your One Slicer.",
+                    "Best for signed-in browsing. Google login works here, and it is the most reliable way to download a 3MF/STL or share a MakerWorld model link back to NIGHT PRINT GENESIS.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 HorizontalDivider()
@@ -2660,6 +2722,7 @@ fun PreviewScreen(
     onResetPreviewCamera: (() -> Unit)? = null
 ) {
     val state by viewModel.state.collectAsState()
+    val heatReview by viewModel.nightPrintHeatReview.collectAsState()
     val context = LocalContext.current
     val parsedGcode by viewModel.parsedGcode.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
@@ -2687,12 +2750,41 @@ fun PreviewScreen(
     val sliceMixToolSpace by viewModel.sliceMixToolSpace.collectAsState()
     val slotPaletteWithMixBlends by viewModel.slotPaletteWithMixBlends.collectAsState()
 
+    // Approval is only for the current generated file; no permission is persisted.
+    val review = heatReview
+    if (review != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.respondNightPrintHeatReview(false) },
+            title = { Text("NIGHT PRINT - 開始温度の確認") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("材料: ${review.material}")
+                    Text("通常の印刷温度: ${review.printNozzleC}℃")
+                    Text("開始準備中の最高温度: ${review.startupPeakC}℃")
+                    Text("ベッド設定: ${review.bedC}℃")
+                    Text("実際のフィラメントの許容温度を確認してください。別の材料・機種・温度異常は承認後も拒否されます。")
+                    Text("承認はこのG-codeの再監査だけです。プリンターへの送信や印刷開始は行いません。")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.respondNightPrintHeatReview(false) }) {
+                    Text("承認せず中止")
+                }
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.respondNightPrintHeatReview(true) }) {
+                    Text("温度を確認して承認")
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text("Your One Slicer", fontWeight = FontWeight.Bold)
+                        Text(androidx.compose.ui.res.stringResource(R.string.app_name), fontWeight = FontWeight.Bold)
                         Text(
                             "☕ Support development",
                             style = MaterialTheme.typography.labelSmall,

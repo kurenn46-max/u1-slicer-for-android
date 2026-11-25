@@ -29,6 +29,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -36,8 +38,15 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Use preinstalled Android SDK
+        run: |
+          set -euo pipefail
+          test -d "$ANDROID_HOME"
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          if [ ! -d "$ANDROID_HOME/platforms/android-34" ]; then
+            SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+            "$SDKMGR" "platforms;android-34" "build-tools;34.0.0"
+          fi
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -61,7 +70,7 @@ jobs:
       # a no-op-build commit (e.g. docs-only) is a full cache hit, nothing compiles,
       # and CodeQL fails with "no source code seen during build" (exit 32 at finalize).
       - name: Build
-        run: ./gradlew clean assembleDebug --no-daemon --no-build-cache
+        run: bash ./gradlew clean assembleDebug --no-daemon --no-build-cache
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3

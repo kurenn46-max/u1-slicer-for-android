@@ -63,6 +63,8 @@ import kotlinx.coroutines.launch
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.SlicingOverrides
+import com.u1.slicer.data.NightPrintCode
+import com.u1.slicer.data.NightPrintJobPackage
 import com.u1.slicer.printer.PrinterViewModel
 
 private sealed interface UpdateCheckState {
@@ -96,6 +98,12 @@ fun SettingsScreen(
     var firstLayerSpeed by remember(config) { mutableStateOf(config.firstLayerSpeed.toInt().toString()) }
     var retractLength by remember(config) { mutableStateOf("%.1f".format(config.retractLength)) }
     var retractSpeed by remember(config) { mutableStateOf(config.retractSpeed.toInt().toString()) }
+    var nightCodeInput by remember { mutableStateOf("") }
+    var verifiedNightCode by remember { mutableStateOf<NightPrintCode.Preset?>(null) }
+    var nightCodeError by remember { mutableStateOf<String?>(null) }
+    var nightCodeStatus by remember { mutableStateOf<String?>(null) }
+    var nightCodeApplying by remember { mutableStateOf(false) }
+    var nightPackage by remember { mutableStateOf<NightPrintJobPackage.Job?>(null) }
 
     val currentOverrides by viewModel.slicingOverrides.collectAsState()
     var overrides by remember(currentOverrides) { mutableStateOf(currentOverrides) }
@@ -652,6 +660,133 @@ fun SettingsScreen(
                             tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                     }
                 }
+            }
+
+            // ---- NIGHT PRINT one-file job import (opt-in; never starts printing) ----
+            val nightPackagePicker = rememberLauncherForActivityResult(
+                ActivityResultContracts.GetContent()
+            ) { uri: Uri? ->
+                if (uri != null) {
+                    scope.launch {
+                        runCatching {
+                            withContext(Dispatchers.IO) {
+                                val input = context.contentResolver.openInputStream(uri)
+                                    ?: throw IllegalArgumentException("Could not open NIGHT PRINT package")
+                                input.use { NightPrintJobPackage.unpack(it, File(context.cacheDir, "nightprint_jobs")) }
+                            }
+                        }.onSuccess { job ->
+                            nightPackage?.model?.delete()
+                            nightPackage = job
+                            nightCodeInput = job.code
+                            verifiedNightCode = job.preset
+                            nightCodeError = null
+                            nightCodeStatus = "Package imported: model + recipe. Review values, then apply."
+                        }.onFailure { error ->
+                            nightCodeError = error.message ?: "Job package could not be imported"
+                            nightCodeStatus = null
+                        }
+                    }
+                }
+            }
+            SettingsSection("NIGHT PRINT Code (experimental)") {
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { nightPackagePicker.launch("*/*") }
+                ) { Text("Open NIGHT PRINT job (.npjob): 3MF + settings") }
+                nightPackage?.let { job ->
+                    Text(
+                        "Loaded package: " + job.model.name + " | SHA256: " + job.sha256.take(12) + "…",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Text(
+                    "Paste a NIGHTPRINT-SETTINGS/V1 code from your assistant. " +
+                    "Validate and review the values before saving. No G-code is executed or sent.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    value = nightCodeInput,
+                    onValueChange = {
+                        nightCodeInput = it
+                        verifiedNightCode = null
+                        nightCodeError = null
+                        nightCodeStatus = null
+                        nightPackage = null // Editing the code detaches the previous bundled model.
+                    },
+                    label = { Text("Paste settings code") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 4,
+                    maxLines = 12
+                )
+                OutlinedButton(onClick = {
+                    runCatching { NightPrintCode.parse(nightCodeInput) }
+                        .onSuccess { preset ->
+                            verifiedNightCode = preset
+                            nightCodeError = null
+                        }
+                        .onFailure { cause ->
+                            verifiedNightCode = null
+                            nightCodeError = cause.message ?: "Invalid settings code"
+                        }
+                }) { Text("Validate and preview") }
+
+                nightCodeError?.let { message ->
+                    Text(message, color = MaterialTheme.colorScheme.error)
+                }
+                val preset = verifiedNightCode
+                if (preset != null) {
+                    Text(
+                        "Current: ${config.filamentType}, ${config.nozzleTemp} C, " +
+                            "${config.bedTemp} C, ${config.printSpeed} mm/s",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(preset.preview())
+                    Text(
+                        "NOT included: inner wall speed, cooling fan, max volumetric flow, " +
+                            "machine profile and physical printer spool. Confirm these in Prepare " +
+                            "and audit G-code before printing.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    val applyAndMaybeSlice: (Boolean) -> Unit = { autoSlice ->
+                        nightCodeApplying = true
+                        val staged = nightPackage
+                        val onApplied: (String?) -> Unit = { error ->
+                            nightCodeApplying = false
+                            if (error == null) {
+                                verifiedNightCode = null
+                                nightCodeError = null
+                                nightPackage = null
+                                if (autoSlice) {
+                                    nightCodeStatus = "Local slicing with G-code safety audit; NO printer commands sent."
+                                    if (staged == null) viewModel.startSlicing()
+                                    onNavigatePreview()
+                                } else {
+                                    nightCodeStatus = "Imported locally. Preview and re-slice before printing."
+                                }
+                            } else {
+                                nightCodeError = error
+                                nightCodeStatus = null
+                            }
+                        }
+                        if (staged != null) {
+                            viewModel.openNightPrintJob(staged, autoSlice, onApplied)
+                        } else {
+                            viewModel.applyNightPrintPreset(preset, onApplied)
+                        }
+                    }
+                    Button(
+                        enabled = !nightCodeApplying,
+                        onClick = { applyAndMaybeSlice(false) }
+                    ) { Text(if (nightCodeApplying) "Applying..." else "Apply settings only") }
+                    if (nightPackage != null || viewModel.modelInfo.value != null) {
+                        OutlinedButton(
+                            enabled = !nightCodeApplying,
+                            onClick = { applyAndMaybeSlice(true) }
+                        ) { Text("Apply + local slice + safety audit (NO PRINT)") }
+                    }
+                }
+                nightCodeStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
 
             // ---- Temperature ----

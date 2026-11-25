@@ -1,0 +1,91 @@
+name: NIGHT PRINT native A1 mini E2E (real G-code)
+
+on:
+  pull_request:
+    paths:
+      - 'app/src/androidTest/java/com/u1/slicer/slicing/NightPrintNativeE2ETest.kt'
+      - 'app/src/main/java/com/u1/slicer/data/NightPrint**'
+      - 'app/src/main/java/com/u1/slicer/bambu/**'
+      - '.github/workflows/nightprint-native-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightprint-native-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-android:
+    name: Execute real native A1 mini TPU .npjob slice on emulator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Set up Android SDK and one-time test signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$ANDROID_HOME"
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          mkdir -p "$HOME/.android" nightprint-e2e-ci
+          keytool -genkeypair -noprompt -keystore "$HOME/.android/debug.keystore" \
+            -storepass android -alias androiddebugkey -keypass android \
+            -keyalg RSA -keysize 2048 -validity 3650 \
+            -dname "CN=Android Test,O=NIGHT PRINT CI,C=JP"
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Real native Android instrumentation (API 35, ARM translation)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_5
+          ram-size: 4096M
+          heap-size: 1024M
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          disable-animations: true
+          script: |
+            set +e
+            mkdir -p nightprint-e2e-ci
+            adb shell getprop ro.product.cpu.abilist > nightprint-e2e-ci/device-abi.txt
+            adb shell getprop ro.dalvik.vm.native.bridge >> nightprint-e2e-ci/device-abi.txt
+            bash ./gradlew --no-daemon :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.u1.slicer.slicing.NightPrintNativeE2ETest
+            result=$?
+            adb logcat -d -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I AndroidRuntime:E '*:S' > nightprint-e2e-ci/native-android-logcat.txt
+            DEVICE_REPORT_DIR=/sdcard/Android/data/com.u1.slicer.orca.genesis.qa3/files
+            adb pull "$DEVICE_REPORT_DIR/nightprint-native-e2e-report.json" nightprint-e2e-ci/raw-stl-native-evidence.json || true
+            adb pull "$DEVICE_REPORT_DIR/nightprint-3mf-profile-e2e-report.json" nightprint-e2e-ci/embedded-3mf-native-evidence.json || true
+            # A Gradle 'green' must not mean the tests were absent/skipped.
+            if [ "$result" -eq 0 ]; then
+              test -s nightprint-e2e-ci/raw-stl-native-evidence.json || result=1
+              test -s nightprint-e2e-ci/embedded-3mf-native-evidence.json || result=1
+            fi
+            echo "instrumentation and evidence exit=$result"
+            exit "$result"
+      - name: Upload native instrumentation results (including failed runs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightprint-native-android-e2e-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            nightprint-e2e-ci/
+            app/build/outputs/androidTest-results/connected/
+            app/build/reports/androidTests/connected/
+      - name: Record outcome explicitly
+        if: always()
+        run: |
+          echo "### NIGHT PRINT real native slice" >> "$GITHUB_STEP_SUMMARY"
+          echo "This job runs actual Android JNI slicing rather than JVM mocks." >> "$GITHUB_STEP_SUMMARY"
+          echo "A failed emulator/ABI install is NOT PASS; release remains HOLD." >> "$GITHUB_STEP_SUMMARY"
+          echo "Hardware A1 mini printing is never performed by CI." >> "$GITHUB_STEP_SUMMARY"

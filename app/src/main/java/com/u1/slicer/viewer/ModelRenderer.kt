@@ -1063,7 +1063,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     private fun setupLogoTexture() {
-        // Render "snapmaker" text to a bitmap, upload as GL texture
+        // Render neutral NIGHT PRINT text to a bitmap (not a machine profile), upload as GL texture
         val bmpW = 512; val bmpH = 128
         val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -1074,7 +1074,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             textAlign = Paint.Align.CENTER
             letterSpacing = 0.08f
         }
-        canvas.drawText("snapmaker", bmpW / 2f, bmpH * 0.72f, paint)
+        canvas.drawText("NIGHT PRINT", bmpW / 2f, bmpH * 0.72f, paint)
 
         val textures = IntArray(1)
         GLES30.glGenTextures(1, textures, 0)
@@ -1229,7 +1229,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glDrawArrays(GLES30.GL_LINES, 0, 8)
         GLES30.glBindVertexArray(0)
 
-        // 5. Snapmaker logo — blended text texture
+        // 5. Neutral NIGHT PRINT branding — blended text texture
         val texShader = textureShader ?: return
         texShader.use()
         GLES30.glUniformMatrix4fv(texShader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)

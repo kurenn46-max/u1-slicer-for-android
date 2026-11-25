@@ -39,6 +39,10 @@ import com.u1.slicer.ui.ObjectSelection
 import com.u1.slicer.data.SessionStateRepository
 import com.u1.slicer.data.SettingsBackup
 import com.u1.slicer.data.SliceConfig
+import com.u1.slicer.data.NightPrintCode
+import com.u1.slicer.data.NightPrintJobPackage
+import com.u1.slicer.data.NightPrintGcodeAudit
+import com.u1.slicer.data.NightPrintRecipeContract
 import com.u1.slicer.data.SliceJob
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.SlicingOverrides
@@ -92,6 +96,9 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.CompletableDeferred
 import java.io.File
 import java.security.MessageDigest
 import java.util.zip.ZipFile
@@ -361,6 +368,37 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _config = MutableStateFlow(SliceConfig())
     val config: StateFlow<SliceConfig> = _config.asStateFlow()
+    /** Enabled only for the settings-code workflow during this app process. */
+    private var nightPrintExpectedPreset: NightPrintCode.Preset? = null
+
+    /** User consent is only for the specific already-generated G-code, never automatic printing. */
+    data class NightPrintHeatReview(
+        val material: String,
+        val printNozzleC: Int,
+        val startupPeakC: Int,
+        val bedC: Int
+    )
+    private val _nightPrintHeatReview = MutableStateFlow<NightPrintHeatReview?>(null)
+    val nightPrintHeatReview: StateFlow<NightPrintHeatReview?> = _nightPrintHeatReview.asStateFlow()
+    @Volatile private var pendingNightPrintHeatDecision: CompletableDeferred<Boolean>? = null
+
+    fun respondNightPrintHeatReview(approved: Boolean) {
+        pendingNightPrintHeatDecision?.complete(approved)
+    }
+
+    /** Bind manual review to unchanged G-code bytes. */
+    private fun nightPrintGcodeSha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(65536)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
 
     /**
      * H2D source-filament to physical-nozzle preference. Values deliberately
@@ -4624,6 +4662,177 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _sliceStale.value = true
     }
 
+
+    /**
+     * Apply a validated NIGHT PRINT code as a local single-filament A1 mini job.
+     * Updates the selected physical slot as well as SliceConfig. Does not send
+     * any commands to the physical printer. Callback runs on the UI thread.
+     */
+
+    /**
+     * Open a NIGHT PRINT package, then synchronize the selected A1 mini material
+     * and optionally start local slicing. No printer upload/print operation occurs.
+     */
+    fun openNightPrintJob(
+        job: NightPrintJobPackage.Job,
+        autoSlice: Boolean,
+        onResult: (String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                _state.value = SlicerState.Loading("Opening NIGHT PRINT model")
+                loadModelFromFile(job.model)
+                val loadState = withTimeout(120_000L) {
+                    state.first { it is SlicerState.ModelLoaded || it is SlicerState.Error }
+                }
+                if (loadState is SlicerState.Error) {
+                    onResult(loadState.message)
+                    return@launch
+                }
+                applyNightPrintPreset(job.preset) { error ->
+                    if (error == null && autoSlice) startSlicing()
+                    onResult(error)
+                }
+            } catch (e: Exception) {
+                onResult("NIGHT PRINT package import failed: " + (e.message ?: "unknown error"))
+            }
+        }
+    }
+
+    fun applyNightPrintPreset(preset: NightPrintCode.Preset, onResult: (String?) -> Unit) {
+        val activePrinter = activePrinterForSlicing.value
+        if (activePrinter?.kind != com.u1.slicer.data.PrinterKind.BAMBU_LAN ||
+            activePrinter.bambu?.model != com.u1.slicer.data.BambuModel.A1_MINI) {
+            onResult("Select the Bambu Lab A1 mini printer before applying this preset.")
+            return
+        }
+        if (_config.value.extruderCount != 1 || _selectedExtruder.value != 0) {
+            onResult("This experimental code requires a single-filament job using slot 1.")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val printerConfig = printersRepo.config.first()
+                    ?: throw IllegalStateException("No saved printer configuration")
+                val printer = printerConfig.active
+                require(printer.id == activePrinter.id) { "Active printer changed; retry" }
+
+                val nextPresets = printer.extruderPresets.toMutableList()
+                val slot0 = nextPresets.indexOfFirst { it.index == 0 }
+                // Job-local filament profile. Does not overwrite any of the user's
+                // existing PETG or TPU success profiles. The volume limit is
+                // conservative for this experimental TPU workflow.
+                val filamentRecipe = listOf(
+                    preset.material, preset.nozzleC, preset.bedC,
+                    preset.retractMm, preset.retractMmS, preset.colorHex ?: "unassigned"
+                ).joinToString("|")
+                val recipeId = MessageDigest.getInstance("SHA-256")
+                    .digest(filamentRecipe.toByteArray(Charsets.UTF_8))
+                    .take(6).joinToString("") { "%02x".format(it) }
+                val profileName = "NIGHTPRINT A1mini " + preset.material + " " + recipeId
+                val profile = filamentDao.getByName(profileName)
+                val profileId = profile?.id ?: filamentDao.insert(
+                    FilamentProfile(
+                        name = profileName,
+                        material = preset.material,
+                        nozzleTemp = preset.nozzleC,
+                        bedTemp = preset.bedC,
+                        retractLength = preset.retractMm,
+                        retractSpeed = preset.retractMmS,
+                        nozzleTempInitialLayer = preset.nozzleC,
+                        bedTempInitialLayer = preset.bedC,
+                        color = preset.colorHex ?: nextPresets.firstOrNull { it.index == 0 }?.color ?: "#202020",
+                        maxVolumetricSpeed = if (preset.material == "TPU") 2.0f else null
+                    )
+                )
+                withTimeout(4_000L) {
+                    filaments.first { entries -> entries.any { it.id == profileId } }
+                }
+                val newSlot0 = if (slot0 < 0) {
+                    ExtruderPreset(index = 0, materialType = preset.material,
+                        color = preset.colorHex ?: "#202020", filamentProfileId = profileId)
+                } else {
+                    nextPresets[slot0].copy(
+                        materialType = preset.material,
+                        color = preset.colorHex ?: nextPresets[slot0].color,
+                        // Link the exact recipe instead of inheriting a mismatched PLA profile.
+                        filamentProfileId = profileId
+                    )
+                }
+                if (slot0 >= 0) nextPresets[slot0] = newSlot0 else nextPresets.add(newSlot0)
+
+                val newConfig = _config.value.copy(
+                    filamentType = preset.material,
+                    filamentTypes = arrayOf(preset.material),
+                    extruderTemps = intArrayOf(preset.nozzleC),
+                    nozzleTemp = preset.nozzleC,
+                    bedTemp = preset.bedC,
+                    printSpeed = preset.printMmS,
+                    travelSpeed = preset.travelMmS,
+                    firstLayerSpeed = preset.firstLayerMmS,
+                    retractLength = preset.retractMm,
+                    retractSpeed = preset.retractMmS,
+                    layerHeight = preset.layerMm,
+                    // The recipe defines both normal and initial layer height.
+                    // Preserve it as a JNI field as well as embedded 3MF metadata.
+                    firstLayerHeight = preset.layerMm,
+                    perimeters = preset.wallCount,
+                    fillDensity = preset.infillPercent / 100f,
+                    supportEnabled = preset.support,
+                    brimWidth = preset.brimMm
+                )
+                val newOverrides = slicingOverrides.value.copy(
+                    layerHeight = OverrideValue(OverrideMode.OVERRIDE, preset.layerMm),
+                    wallCount = OverrideValue(OverrideMode.OVERRIDE, preset.wallCount),
+                    infillDensity = OverrideValue(OverrideMode.OVERRIDE, preset.infillPercent / 100f),
+                    sparseInfillSpeed = OverrideValue(OverrideMode.OVERRIDE, preset.infillMmS),
+                    supports = OverrideValue(OverrideMode.OVERRIDE, preset.support),
+                    bedTemp = OverrideValue(OverrideMode.OVERRIDE, preset.bedC),
+                    brimWidth = OverrideValue(OverrideMode.OVERRIDE, preset.brimMm)
+                )
+
+                // Keep the existing profile library intact. All writes remain local.
+                printersRepo.update(printer.copy(extruderPresets = nextPresets.sortedBy { it.index }))
+                // Await the active-slot flow before allowing immediate auto-slice.
+                withTimeout(3_000L) {
+                    extruderPresets.first { slots ->
+                        slots.any { it.index == 0 && it.materialType == preset.material &&
+                            (preset.colorHex == null || it.color.equals(preset.colorHex, ignoreCase = true)) }
+                    }
+                }
+                settingsRepo.saveSliceConfig(newConfig)
+                settingsRepo.saveSlicingOverrides(newOverrides)
+                // The next slice reads the StateFlow, not the just-written
+                // DataStore object. Wait for emission before allowing auto-slice.
+                withTimeout(4_000L) {
+                    slicingOverrides.first { effective ->
+                        effective.layerHeight == newOverrides.layerHeight &&
+                        effective.wallCount == newOverrides.wallCount &&
+                        effective.infillDensity == newOverrides.infillDensity &&
+                        effective.sparseInfillSpeed == newOverrides.sparseInfillSpeed &&
+                        effective.supports == newOverrides.supports &&
+                        effective.bedTemp == newOverrides.bedTemp &&
+                        effective.brimWidth == newOverrides.brimWidth
+                    }
+                }
+                _config.value = newConfig
+                setFilamentMaterialOverride(0, preset.material)
+                // Preview colour is separate from polymer type and physical spool identity.
+                preset.colorHex?.let { hex ->
+                    setFilamentColorOverride(0, hex)
+                    _activeExtruderColors.value = MutableList(4) { "" }.apply { this[0] = hex }
+                }
+                if (lastModelInfo != null) profileNeedsReEmbed = true
+                _sliceStale.value = true
+                nightPrintExpectedPreset = preset
+                onResult(null)
+            } catch (e: Exception) {
+                onResult(e.message ?: "NIGHT PRINT settings import failed")
+            }
+        }
+    }
+
     fun updateConfig(updater: (SliceConfig) -> SliceConfig) {
         _config.value = updater(_config.value)
         _sliceStale.value = true
@@ -4934,6 +5143,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 overrides = slicingOverrides.value,
                 hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
             )
+            // GENESIS recipe values are explicit user intent. Apply them after
+            // imported 3MF process/filament settings and after ordinary overrides,
+            // but never replace target-owned machine macros or geometry.
+            val recipeOverrides = if (sliceTarget == SlicerTarget.BambuA1Mini) {
+                nightPrintExpectedPreset?.let { NightPrintRecipeContract.explicitOverrides(it) }
+                    ?: emptyMap()
+            } else {
+                emptyMap()
+            }
             BambuImportedConfigComposer.compose(
                 target = sliceTarget,
                 sourceConfig = sourceConfig,
@@ -4942,7 +5160,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     "wipe_tower_y" to targeted.wipeTowerY.toString(),
                     "wipe_tower_width" to targeted.wipeTowerWidth.toString(),
                 ),
-                explicitOverrides = explicitBambuOverrides,
+                explicitOverrides = explicitBambuOverrides + recipeOverrides,
             )
         } else {
             null
@@ -5403,6 +5621,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun cancelSlicing() {
         if (_state.value is SlicerState.Slicing) {
+            pendingNightPrintHeatDecision?.complete(false)
             _state.value = SlicerState.Cancelling
             viewModelScope.launch(Dispatchers.IO) {
                 native.cancelSlice()
@@ -5412,6 +5631,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun startSlicing() {
+        // Never replace an output file while its manual safety review is pending.
+        if (pendingNightPrintHeatDecision != null) return
         if (!com.u1.slicer.slice.isLocalSliceAvailable(
                 activePrinter = activePrinterForSlicing.value,
             )
@@ -6093,12 +6314,33 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // see the C-1 part-B concern in the branch report re: the native engine
                     // deriving num_physical from filament_diameter.size() (= 4 + nMix).
                     mixedFilamentDefinitions = mixedFilamentDefinitions,
+                    // Explicit NIGHT PRINT values missing from the legacy JNI
+                    // interface. Without these, the native engine silently
+                    // falls back to the incoming 3MF/PLA process profile.
+                    nightPrintSparseInfillSpeed =
+                        if (target == SlicerTarget.BambuA1Mini)
+                            nightPrintExpectedPreset?.infillMmS?.toFloat() ?: -1f
+                        else -1f,
+                    nightPrintFilamentColor =
+                        if (target == SlicerTarget.BambuA1Mini)
+                            nightPrintExpectedPreset?.colorHex.orEmpty()
+                        else "",
                     bambuExplicitOverrides = if (target != SlicerTarget.SnapmakerU1) {
-                        buildExplicitBambuProfileOverrides(
+                        val explicitKeys = buildExplicitBambuProfileOverrides(
                             profileOverrides = profileOverrides,
                             overrides = ov,
                             hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
-                        ).keys.joinToString(separator = "|", prefix = "|", postfix = "|")
+                        ).keys.toMutableSet()
+                        if (target == SlicerTarget.BambuA1Mini && nightPrintExpectedPreset != null) {
+                            // A GENESIS import is an explicit user material/temperature choice.
+                            // Never inherit the STL PLA defaults or an embedded 3MF material.
+                            explicitKeys.addAll(
+                                NightPrintRecipeContract.explicitOverrides(
+                                    nightPrintExpectedPreset!!
+                                ).keys
+                            )
+                        }
+                        explicitKeys.joinToString(separator = "|", prefix = "|", postfix = "|")
                     } else {
                         ""
                     },
@@ -6264,6 +6506,113 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         diagnostics.clearSliceInProgress()
                         _state.value = SlicerState.Error(outputValidation.errorMessage)
                         return@launch
+                    }
+
+                    // NIGHT PRINT experimental safety gate — only armed after the user
+                    // explicitly applies a code in this app session.
+                    // Runs BEFORE creating a Bambu upload artifact or showing Print controls.
+                    nightPrintExpectedPreset?.let { expected ->
+                        val gcodeFile = File(result.gcodePath)
+                        var audit = NightPrintGcodeAudit.inspect(
+                            gcodeFile, expected.material, expected.nozzleC, expected.bedC
+                        )
+                        if (NightPrintGcodeAudit.canRequestStartupHeatApproval(audit)) {
+                            val originalSha256 = nightPrintGcodeSha256(gcodeFile)
+                            val decision = CompletableDeferred<Boolean>()
+                            pendingNightPrintHeatDecision = decision
+                            _nightPrintHeatReview.value = NightPrintHeatReview(
+                                material = expected.material,
+                                printNozzleC = expected.nozzleC,
+                                startupPeakC = audit.startupNozzlePeakC!!,
+                                bedC = expected.bedC
+                            )
+                            _state.value = SlicerState.Slicing(maxPct, "Review startup temperature (no printing)")
+                            val approved = try {
+                                withTimeoutOrNull(300_000L) { decision.await() } == true
+                            } finally {
+                                _nightPrintHeatReview.value = null
+                                if (pendingNightPrintHeatDecision === decision) {
+                                    pendingNightPrintHeatDecision = null
+                                }
+                            }
+                            if (!approved) {
+                                diagnostics.recordEvent(
+                                    "night_print_startup_heat_rejected",
+                                    mapOf("approved" to false)
+                                )
+                                diagnostics.clearSliceInProgress()
+                                _state.value = SlicerState.Error(
+                                    "NIGHT PRINT: Startup temperature not approved.\n\n" +
+                                        "No print file released. Return to Prepare to review settings."
+                                )
+                                return@launch
+                            }
+                            if (nightPrintGcodeSha256(gcodeFile) != originalSha256) {
+                                diagnostics.clearSliceInProgress()
+                                _state.value = SlicerState.Error(
+                                    "NIGHT PRINT: G-code changed during review. No print file released."
+                                )
+                                return@launch
+                            }
+                            // Consent does not bypass material, printer, layer or heater limits.
+                            audit = NightPrintGcodeAudit.inspect(
+                                gcodeFile, expected.material, expected.nozzleC, expected.bedC,
+                                startupHeatApproved = true
+                            )
+                            diagnostics.recordEvent(
+                                "night_print_startup_heat_approved",
+                                mapOf("startupPeakC" to audit.startupNozzlePeakC,
+                                      "printNozzleC" to expected.nozzleC,
+                                      "passedAfterReaudit" to audit.passed)
+                            )
+                        }
+                        diagnostics.recordEvent(
+                            "night_print_gcode_audit",
+                            mapOf(
+                                "passed" to audit.passed,
+                                "expectedMaterial" to expected.material,
+                                "recognizedMaterials" to audit.recognizedMaterials.sorted(),
+                                "printerModel" to audit.printerModel,
+                                "errors" to audit.errors,
+                                "warnings" to audit.warnings
+                            )
+                        )
+                        if (!audit.passed) {
+                            diagnostics.clearSliceInProgress()
+                            _state.value = SlicerState.Error(
+                                "NIGHT PRINT safety check blocked this G-code.\n\n" +
+                                    audit.errors.joinToString("\n") +
+                                    "\n\nReview material mapping; do not print this file."
+                            )
+                            return@launch
+                        }
+                        // A successful heater/material audit is not enough: every
+                        // user-selected recipe value must survive 3MF embedding,
+                        // native slicing, and the exported Orca configuration.
+                        // Physical G1 speeds can be lower due to flow/acceleration;
+                        // compare effective slicer settings, not every motion feed.
+                        val recipeContract = NightPrintRecipeContract.verify(gcodeFile, expected)
+                        diagnostics.recordEvent(
+                            "night_print_recipe_contract",
+                            mapOf(
+                                "passed" to recipeContract.passed,
+                                "mismatches" to recipeContract.mismatches.map {
+                                    mapOf("key" to it.key, "expected" to it.expected, "found" to it.found)
+                                }
+                            )
+                        )
+                        if (!recipeContract.passed) {
+                            diagnostics.clearSliceInProgress()
+                            val mismatches = recipeContract.mismatches.take(8).joinToString("\n") {
+                                "${it.key}: required ${it.expected}, generated ${it.found ?: "MISSING"}"
+                            }
+                            _state.value = SlicerState.Error(
+                                "NIGHT PRINT: Recipe did not fully reach the slicer.\n\n" +
+                                    mismatches +
+                                    "\n\nNo print file released; adjust mapping and re-slice."
+                            )
+                            return@launch
+                        }
                     }
 
                     diagnostics.recordEvent(

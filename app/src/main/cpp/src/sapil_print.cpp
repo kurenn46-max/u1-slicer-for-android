@@ -325,10 +325,27 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     auto explicitly_overrides = [&](const char* key) {
         return explicit_keys.find("|" + std::string(key) + "|") != std::string::npos;
     };
+    // GENESIS and plain STL must not silently inherit PLA from the Bambu
+    // geometry baseline when the caller explicitly selected TPU/PETG.
+    // Imported Bambu 3MF keeps its source filament metadata unless the user
+    // actually overrides filament_type. Do not use the U1 configuration path.
+    if (!has_embedded_profile || explicitly_overrides("filament_type")) {
+        std::vector<std::string> types = config.filament_types;
+        if (types.empty()) {
+            types.push_back(config.filament_type.empty() ? "PLA" : config.filament_type);
+        }
+        if ((int)types.size() < n_ext) types.resize(n_ext, types.back());
+        if ((int)types.size() > n_ext) types.resize(n_ext);
+        dpc.set_key_value("filament_type",
+            new Slic3r::ConfigOptionStrings(std::move(types)));
+    }
     Slic3r::ConfigSubstitutionContext bambu_substitutions{
         Slic3r::ForwardCompatibilitySubstitutionRule::Disable};
     if (explicitly_overrides("layer_height") && config.layer_height > 0.0f)
         dpc.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(config.layer_height));
+    if (explicitly_overrides("initial_layer_print_height") && config.first_layer_height > 0.0f)
+        dpc.set_key_value("initial_layer_print_height",
+            new Slic3r::ConfigOptionFloat(config.first_layer_height));
     if (explicitly_overrides("wall_loops"))
         dpc.set_key_value("wall_loops", new Slic3r::ConfigOptionInt(config.perimeters));
     if (explicitly_overrides("top_shell_layers"))
@@ -339,6 +356,36 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
         dpc.set_key_value("sparse_infill_density", new Slic3r::ConfigOptionPercent(config.fill_density * 100.0));
     if (explicitly_overrides("sparse_infill_pattern"))
         dpc.set_deserialize("sparse_infill_pattern", config.fill_pattern, bambu_substitutions);
+    // User-selected NIGHT PRINT settings must survive embedded 3MF profiles.
+    // Do not apply U1 scalar defaults to normal Bambu imports: only an
+    // explicitly selected key can overwrite the incoming native configuration.
+    if (explicitly_overrides("outer_wall_speed"))
+        dpc.set_key_value("outer_wall_speed", new Slic3r::ConfigOptionFloat(config.print_speed));
+    if (explicitly_overrides("travel_speed"))
+        dpc.set_key_value("travel_speed", new Slic3r::ConfigOptionFloat(config.travel_speed));
+    if (explicitly_overrides("initial_layer_speed"))
+        dpc.set_key_value("initial_layer_speed", new Slic3r::ConfigOptionFloat(config.first_layer_speed));
+    if (explicitly_overrides("initial_layer_infill_speed"))
+        dpc.set_key_value("initial_layer_infill_speed", new Slic3r::ConfigOptionFloat(config.first_layer_speed));
+    if (explicitly_overrides("sparse_infill_speed") && config.night_print_sparse_infill_speed > 0.0f)
+        dpc.set_key_value("sparse_infill_speed",
+            new Slic3r::ConfigOptionFloat(config.night_print_sparse_infill_speed));
+    if (explicitly_overrides("retraction_length"))
+        dpc.set_key_value("retraction_length",
+            new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.retract_length)));
+    if (explicitly_overrides("retraction_speed"))
+        dpc.set_key_value("retraction_speed",
+            new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.retract_speed)));
+    // Physical filament colour cannot be controlled by software; this is
+    // preview metadata only.  The NIGHT PRINT code parser validates #RRGGBB.
+    if (explicitly_overrides("filament_colour") &&
+        config.night_print_filament_color.size() == 7 &&
+        config.night_print_filament_color[0] == '#') {
+        dpc.set_key_value("filament_colour",
+            new Slic3r::ConfigOptionStrings(std::vector<std::string>(
+                n_ext, config.night_print_filament_color)));
+    }
+
     if (explicitly_overrides("enable_support"))
         dpc.set_key_value("enable_support", new Slic3r::ConfigOptionBool(config.support_enabled));
     if (explicitly_overrides("support_type"))
@@ -354,13 +401,28 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     if (explicitly_overrides("skirt_loops"))
         dpc.set_key_value("skirt_loops", new Slic3r::ConfigOptionInt(config.skirt_loops));
     if (explicitly_overrides("hot_plate_temp") || explicitly_overrides("textured_plate_temp")) {
-        dpc.set_key_value("hot_plate_temp", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
-        dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
-        dpc.set_key_value("textured_plate_temp", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
-        dpc.set_key_value("textured_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
+        // GENESIS supplies a job-local, explicitly selected bed temperature.
+        // Orca picks its heater target from the *active* curr_bed_type.  If we
+        // only override hot/textured plate keys, a plain STL or embedded 3MF
+        // whose active plate maps to cool_plate_temp can silently emit 35 C
+        // even though the user chose 50 C.  Preserve the existing plate type
+        // but apply the explicit temperature to all three supported families,
+        // including their first-layer variants.  Do not do this for ordinary
+        // imported Bambu jobs without an explicit bed-temperature override.
+        const std::vector<int> selected_bed(n_ext, config.bed_temp);
+        dpc.set_key_value("hot_plate_temp", new Slic3r::ConfigOptionInts(selected_bed));
+        dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(selected_bed));
+        dpc.set_key_value("cool_plate_temp", new Slic3r::ConfigOptionInts(selected_bed));
+        dpc.set_key_value("cool_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(selected_bed));
+        dpc.set_key_value("textured_plate_temp", new Slic3r::ConfigOptionInts(selected_bed));
+        dpc.set_key_value("textured_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(selected_bed));
     }
-    if (explicitly_overrides("nozzle_temperature") && !config.extruder_temps.empty()) {
-        std::vector<int> values = config.extruder_temps;
+    if (explicitly_overrides("nozzle_temperature") &&
+        (!config.extruder_temps.empty() || n_ext == 1)) {
+        // For a one-spool GENESIS job, nozzleTemp is the explicit recipe value,
+        // even if a per-extruder array has not yet been populated.
+        std::vector<int> values = config.extruder_temps.empty()
+            ? std::vector<int>{config.nozzle_temp} : config.extruder_temps;
         while ((int)values.size() < n_ext) values.push_back(values.back());
         dpc.set_key_value("nozzle_temperature", new Slic3r::ConfigOptionInts(values));
         dpc.set_key_value("nozzle_temperature_initial_layer", new Slic3r::ConfigOptionInts(std::move(values)));

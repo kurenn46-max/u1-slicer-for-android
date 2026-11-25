@@ -1,0 +1,69 @@
+name: NIGHT PRINT ARM64 dependency pilot
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nightprint-arm64-deps-pilot.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: nightprint-arm64-deps-pilot
+  cancel-in-progress: true
+jobs:
+  pilot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Select exact NDK and record toolchain
+        run: |
+          set -euo pipefail
+          mkdir -p deps-pilot
+          NDK="$ANDROID_HOME/ndk/26.1.10909125"
+          if [ ! -d "$NDK" ]; then
+            SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+            "$SDKMGR" "ndk;26.1.10909125"
+          fi
+          test -f "$NDK/build/cmake/android.toolchain.cmake"
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version | tee deps-pilot/compiler.txt
+          grep -q 'clang version 17' deps-pilot/compiler.txt
+      - name: Build two ARM64 libraries using existing repository recipe
+        run: |
+          set -euo pipefail
+          # Limit a first diagnostic run; do not build Boost/OCCT/full engine.
+          timeout 180s bash scripts/build_deps.sh build_zlib 2>&1 | tee deps-pilot/zlib-build.log
+          timeout 180s bash scripts/build_deps.sh build_expat 2>&1 | tee deps-pilot/expat-build.log
+          test -s app/src/main/cpp/extern/zlib/lib/arm64-v8a/libz.a
+          test -s app/src/main/cpp/extern/expat/lib/arm64-v8a/libexpat.a
+      - name: Verify real archives and record source provenance
+        run: |
+          set -euo pipefail
+          TOOL="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          ROOT=app/src/main/cpp/extern
+          set -x
+          for lib in "$ROOT/zlib/lib/arm64-v8a/libz.a" "$ROOT/expat/lib/arm64-v8a/libexpat.a"; do
+            test -s "$lib"
+            "$TOOL/llvm-ar" t "$lib" > "deps-pilot/$(basename "$lib").members.txt"
+            "$TOOL/llvm-readelf" -h "$lib" > "deps-pilot/$(basename "$lib").elf.txt"
+            grep -q 'AArch64' "deps-pilot/$(basename "$lib").elf.txt"
+            if grep 'Machine:' "deps-pilot/$(basename "$lib").elf.txt" | grep -v 'AArch64'; then exit 1; fi
+            sha256sum "$lib" >> deps-pilot/sha256.txt
+          done
+          git -C scripts/build/zlib rev-parse HEAD > deps-pilot/zlib-source.txt
+          git -C scripts/build/libexpat rev-parse HEAD > deps-pilot/expat-source.txt
+          test -f "$ROOT/zlib/include/zlib.h"
+          test -f "$ROOT/expat/include/expat.h"
+          cat deps-pilot/sha256.txt
+          echo "Pilot only: two real ARM64 dependencies; full engine and release remain HOLD."
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightprint-arm64-dependency-pilot
+          path: |
+            deps-pilot/
+            app/src/main/cpp/extern/zlib/
+            app/src/main/cpp/extern/expat/
+          retention-days: 3
