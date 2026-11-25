@@ -173,11 +173,12 @@ class NightPrintGcodeAuditTest {
     private val petgPurge = petg.replace(";LAYER_CHANGE",
         "M104 S250\nM109 S250\nM104 S240\nM109 S235\n;LAYER_CHANGE")
 
-    @Test fun petg235PurgeRequiresExplicitReviewAndReturnToTarget() {
+    @Test fun petg235PurgeRemainsBlockedEvenWithConsentAndTargetReturn() {
         val pending = petgAudit(petgPurge)
         assertFalse(pending.passed)
-        assertTrue(NightPrintGcodeAudit.canRequestStartupHeatApproval(pending))
-        assertTrue(petgAudit(petgPurge, true).passed)
+        assertFalse(NightPrintGcodeAudit.canRequestStartupHeatApproval(pending))
+        assertFalse(petgAudit(petgPurge, true).passed)
+        assertTrue(pending.errors.any { it.contains("not qualified") })
     }
     @Test fun petgRejectsPurgeWithoutReturnEvenWithConsent() {
         val bad = petgPurge.replace("M109 S235\n;LAYER_CHANGE", ";LAYER_CHANGE")

@@ -147,7 +147,13 @@ object NightPrintGcodeAudit {
         if (beyondCeiling.isNotEmpty()) {
             errors.add("Startup nozzle exceeds material cap $ceiling C: " + beyondCeiling.sorted())
         }
-        val needsApproval = highStartup.isNotEmpty() && beyondCeiling.isEmpty()
+        // Setpoint return alone is not proof of cooldown. Until the specific
+        // PETG spool limit and A1 mini firmware sequence are verified, keep
+        // elevated PETG startup diagnostic-only, even with user consent.
+        if (petgPurgeRecipe && highStartup.isNotEmpty()) {
+            errors.add("PETG elevated startup heat is not qualified for printing")
+        }
+        val needsApproval = !petgPurgeRecipe && highStartup.isNotEmpty() && beyondCeiling.isEmpty()
         if (needsApproval) {
             warnings.add(
                 "Startup purge reaches ${highStartup.maxOrNull()} C; printing target is $nozzleC C. Manual review required."
