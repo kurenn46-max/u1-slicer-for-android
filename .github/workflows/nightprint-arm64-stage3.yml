@@ -119,3 +119,109 @@ jobs:
             app/src/main/cpp/extern/boost/
             app/src/main/cpp/extern/occt/
           retention-days: 7
+
+  native-candidate:
+    needs: stage3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Confirm dependency recipes and source pin
+        run: |
+          set -euo pipefail
+          git diff --exit-code e94a8fc253f7bce8a83c122cc08969a349358117 HEAD -- scripts/build_deps.sh
+          mkdir -p native-candidate
+          git rev-parse HEAD > native-candidate/source.txt
+          git submodule status --recursive > native-candidate/submodules.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: nightprint-arm64-dependency-pilot
+          run-id: 45586588860
+          github-token: ${{ github.token }}
+          path: dep-input/stage1
+      - uses: actions/download-artifact@v4
+        with:
+          name: nightprint-arm64-stage2
+          run-id: 45586589013
+          github-token: ${{ github.token }}
+          path: dep-input/stage2
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nightprint-arm64-stage3-*
+          path: dep-input/stage3
+      - name: Verify manifests and assemble dependencies
+        run: |
+          set -euo pipefail
+          (cd dep-input/stage1 && sha256sum -c deps-pilot/sha256.txt)
+          (cd dep-input/stage2 && sha256sum -c deps-stage2/sha256.txt && sha256sum -c deps-stage2/header-manifest.sha256) > native-candidate/stage2-verify.log
+          for group in math boost occt; do
+            (cd "dep-input/stage3/nightprint-arm64-stage3-$group" && sha256sum -c deps-stage3/sha256.txt && sha256sum -c deps-stage3/header-manifest.sha256) > "native-candidate/$group-verify.log"
+          done
+          for root in dep-input/stage1 dep-input/stage2 dep-input/stage3/nightprint-arm64-stage3-{math,boost,occt}; do
+            test -d "$root/app/src/main/cpp/extern"
+            cp -a "$root/app/src/main/cpp/extern/." app/src/main/cpp/extern/
+          done
+          find dep-input -type f \( -name '*.commit' -o -name '*source.txt' -o -name '*sha256*' -o -name 'compiler.txt' \) -print > native-candidate/provenance-files.txt
+          tar -czf native-candidate/dependency-provenance.tar.gz -T native-candidate/provenance-files.txt
+      - name: Configure and build actual native engine
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/26.1.10909125"
+          if [ ! -d "$NDK" ]; then
+            SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+            "$SDKMGR" "ndk;26.1.10909125"
+          fi
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version | tee native-candidate/compiler.txt
+          grep -q 'clang version 17.0.2' native-candidate/compiler.txt
+          cmake -S app/src/main/cpp -B native-build -G Ninja \
+            -DCMAKE_SYSTEM_NAME=Android -DCMAKE_SYSTEM_VERSION=26 \
+            -DANDROID_PLATFORM=android-26 -DANDROID_ABI=arm64-v8a \
+            -DANDROID_NDK="$NDK" -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DCMAKE_BUILD_TYPE=Release -DSLICER_BACKEND=orca -DANDROID_STL=c++_shared \
+            2>&1 | tee native-candidate/configure.log
+          timeout 1800s ninja -C native-build -j1 prusaslicer-jni 2>&1 | tee native-candidate/build.log
+      - name: Validate native candidate
+        run: |
+          set -euo pipefail
+          TOOL="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$TOOL/llvm-strip" --strip-unneeded native-build/libprusaslicer-jni.so -o native-candidate/libprusaslicer-jni.so
+          SO=native-candidate/libprusaslicer-jni.so
+          "$TOOL/llvm-readelf" -h -lW -p .comment "$SO" > native-candidate/elf.txt
+          grep -q AArch64 native-candidate/elf.txt
+          grep -q 'clang version 17.0.2' native-candidate/elf.txt
+          test "$(awk '/^[[:space:]]*LOAD /{print $NF}' native-candidate/elf.txt | sort -u)" = 0x4000
+          "$TOOL/llvm-readelf" --dyn-syms --wide "$SO" > native-candidate/jni.txt
+          python3 - <<'PY'
+          import re,pathlib
+          kotlin=pathlib.Path("app/src/main/java/com/u1/slicer/NativeLibrary.kt").read_text()
+          expected=set(re.findall(r"external\s+fun\s+(\w+)\s*\(",kotlin))
+          actual=set(re.findall(r"Java_com_u1_slicer_NativeLibrary_(\w+)",pathlib.Path("native-candidate/jni.txt").read_text()))
+          assert expected and expected==actual,(sorted(expected-actual),sorted(actual-expected))
+          print("Verified JNI symbol set:",len(expected))
+          PY
+          sha256sum "$SO" > native-candidate/candidate.sha256
+          echo "Engineering candidate only. No APK release, no printer connection."
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightprint-native-build-diagnostics
+          path: |
+            native-candidate/*.txt
+            native-candidate/*.log
+            native-candidate/*.sha256
+            native-candidate/*.tar.gz
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: nightprint-native-engine-candidate
+          path: native-candidate/libprusaslicer-jni.so
+          retention-days: 7
