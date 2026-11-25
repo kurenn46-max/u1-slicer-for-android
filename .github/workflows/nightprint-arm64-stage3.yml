@@ -12,12 +12,12 @@ concurrency:
 jobs:
   stage3:
     runs-on: ubuntu-24.04
-    timeout-minutes: 18
+    timeout-minutes: 32
     strategy:
       fail-fast: false
       max-parallel: 2
       matrix:
-        group: [math, boost, occt]
+        group: [occt]
     env:
       GROUP: ${{ matrix.group }}
     steps:
@@ -57,7 +57,7 @@ jobs:
               git -C /tmp/u1-deps-boost-build rev-parse HEAD > deps-stage3/boost-builder.commit
               ;;
             occt)
-              timeout 750s bash scripts/build_deps.sh build_occt 2>&1 | tee deps-stage3/occt.log
+              timeout 1650s bash scripts/build_deps.sh build_occt 2>&1 | tee deps-stage3/occt.log
               git -C /tmp/u1-deps-occt-build rev-parse HEAD > deps-stage3/occt.commit
               ;;
             *) exit 1 ;;
@@ -154,8 +154,20 @@ jobs:
           path: dep-input/stage2
       - uses: actions/download-artifact@v4
         with:
-          pattern: nightprint-arm64-stage3-*
-          path: dep-input/stage3
+          name: nightprint-arm64-stage3-math
+          run-id: 45586971313
+          github-token: ${{ github.token }}
+          path: dep-input/stage3/nightprint-arm64-stage3-math
+      - uses: actions/download-artifact@v4
+        with:
+          name: nightprint-arm64-stage3-boost
+          run-id: 45586971313
+          github-token: ${{ github.token }}
+          path: dep-input/stage3/nightprint-arm64-stage3-boost
+      - uses: actions/download-artifact@v4
+        with:
+          name: nightprint-arm64-stage3-occt
+          path: dep-input/stage3/nightprint-arm64-stage3-occt
       - name: Verify manifests and assemble dependencies
         run: |
           set -euo pipefail
