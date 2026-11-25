@@ -166,6 +166,15 @@ class NightPrintGcodeAuditTest {
         assertFalse(audit(bad).passed)
     }
 
+    @Test fun acceptsOrcaChangeLayerMarkerWithoutRelaxingTemperatureLimits() {
+        val alt = valid.replace(";LAYER_CHANGE", "; CHANGE_LAYER")
+        assertTrue(audit(alt).passed)
+        val unsafe = alt + "\nM104 T0 S250"
+        val report = NightPrintGcodeAudit.inspect(temp(unsafe), "TPU", 225, 50, true)
+        assertFalse(report.passed)
+        assertTrue(report.errors.any { it.contains("AFTER layer") })
+    }
+
     @Test fun rejectsEmptyGcode() = assertFalse(audit("").passed)
     private val petg = valid.replace("TPU", "PETG").replace("225", "235").replace("S50", "S65")
     private fun petgAudit(code: String, approved: Boolean = false) =

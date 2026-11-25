@@ -70,7 +70,9 @@ object NightPrintRecipeContract {
         var inPrint = false
         gcode.useLines { lines ->
             lines.forEach { line ->
-                if (line.trim().equals(";LAYER_CHANGE", ignoreCase = true)) inPrint = true
+                if (line.trim().equals(";LAYER_CHANGE", ignoreCase = true) ||
+                    line.trim().equals("; CHANGE_LAYER", ignoreCase = true) ||
+                    line.trim().equals(";CHANGE_LAYER", ignoreCase = true)) inPrint = true
                 if (line.trim().startsWith("; stop printing object", ignoreCase = true)) inPrint = false
                 if (inPrint) {
                     retractCommand.matchEntire(line)?.let { match ->

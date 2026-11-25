@@ -138,6 +138,15 @@ class NightPrintRecipeContractTest {
         assertTrue(result.passed)
     }
 
+    @Test fun orcaChangeLayerCannotHideWrongRetraction() {
+        val declared = metadata(NightPrintRecipeContract.explicitOverrides(recipe))
+        val good = check(declared + "\n; CHANGE_LAYER\nG1 E-0.5 F1500\n")
+        val bad = check(declared + "\n; CHANGE_LAYER\nG1 E-.8 F1800\n")
+        assertTrue(good.passed)
+        assertFalse(bad.passed)
+        assertTrue(bad.mismatches.any { it.key == "actual_print_retractions" })
+    }
+
     @Test fun noMaterialColorStillDoesNotAssumeBlack() {
         val withoutColor = NightPrintCode.parse(code.replace("color_hex=#000000", ""))
         assertFalse("filament_colour" in NightPrintRecipeContract.explicitOverrides(withoutColor))

@@ -66,7 +66,7 @@ object NightPrintGcodeAudit {
         // Reject unknown temperature syntax instead of silently overlooking a hotend command.
         val temperatureCommand = Regex("^\\s*M(104|109|140|190)(?!\\d)", RegexOption.IGNORE_CASE)
         val temperatureParam = Regex("(?:^|\\s)([SR])(-?\\d+(?:\\.\\d+)?)(?=\\s|$)", RegexOption.IGNORE_CASE)
-        val layerMarker = Regex("^;\\s*LAYER_CHANGE\\s*$", RegexOption.IGNORE_CASE)
+        val layerMarker = Regex("^;\\s*(?:LAYER_CHANGE|CHANGE_LAYER)\\s*$", RegexOption.IGNORE_CASE)
 
         file.useLines { lines ->
             lines.forEach { line ->
@@ -123,7 +123,7 @@ object NightPrintGcodeAudit {
         if (initialNozzleTags.size != 1 || initialNozzleTags.single() != nozzleC) {
             errors.add("Initial nozzle mismatch/missing: expected $nozzleC C; found " + initialNozzleTags.sorted())
         }
-        if (!layerStarted) errors.add("Missing ;LAYER_CHANGE marker; unable to distinguish startup from printing")
+        if (!layerStarted) errors.add("Missing recognized layer marker; unable to distinguish startup from printing")
         if (!expectedNozzleCommandFound) errors.add("No nozzle-temperature command found for $nozzleC C")
 
         // All layer-phase temperatures must remain within the selected print setting.
