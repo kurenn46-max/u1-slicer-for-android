@@ -34,12 +34,16 @@ jobs:
         run: |
           set -euo pipefail
           # Limit a first diagnostic run; do not build Boost/OCCT/full engine.
-          timeout 300s bash scripts/build_deps.sh build_zlib build_expat 2>&1 | tee deps-pilot/build.log
+          timeout 180s bash scripts/build_deps.sh build_zlib 2>&1 | tee deps-pilot/zlib-build.log
+          timeout 180s bash scripts/build_deps.sh build_expat 2>&1 | tee deps-pilot/expat-build.log
+          test -s app/src/main/cpp/extern/zlib/lib/arm64-v8a/libz.a
+          test -s app/src/main/cpp/extern/expat/lib/arm64-v8a/libexpat.a
       - name: Verify real archives and record source provenance
         run: |
           set -euo pipefail
           TOOL="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           ROOT=app/src/main/cpp/extern
+          set -x
           for lib in "$ROOT/zlib/lib/arm64-v8a/libz.a" "$ROOT/expat/lib/arm64-v8a/libexpat.a"; do
             test -s "$lib"
             "$TOOL/llvm-ar" t "$lib" > "deps-pilot/$(basename "$lib").members.txt"
