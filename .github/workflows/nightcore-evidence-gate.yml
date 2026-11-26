@@ -15,8 +15,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api repos/kurenn46-max/u1-slicer-for-android/actions/artifacts/15152341211/zip > evidence.zip
-          echo '707cbd03123f69408e6e9536ecc412b93190ca4b23f090d882941a99c16e141b  evidence.zip' | sha256sum -c
+          gh api repos/kurenn46-max/u1-slicer-for-android/actions/artifacts/15152642786/zip > evidence.zip
+          echo '6e8cf3c53dc0354d38e9dfe15ebeecf20603c4b970214766f75e3842126b0643  evidence.zip' | sha256sum -c
           unzip -p evidence.zip nightprint-e2e-ci/host-final.txt
           unzip -p evidence.zip nightprint-e2e-ci/live-logcat.txt | tail -100
           unzip -p evidence.zip 'nightprint-e2e-ci/ui-results/**/TEST-*.xml' | grep -E -A 18 '<failure|<error' | head -80 || true
