@@ -1,0 +1,23 @@
+name: NIGHT CORE native evidence gate unit tests
+on:
+  pull_request:
+    paths:
+      - 'tools/nightcore/verify_native_evidence.py'
+      - 'tools/nightcore/test_native_evidence.py'
+      - '.github/scripts/run-nightprint-android-e2e.sh'
+      - '.github/workflows/nightcore-evidence-gate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  evidence-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check evidence gate and fail-closed cases
+        run: python3 -m unittest discover -s tools/nightcore -p 'test_native_evidence.py' -v
+      - name: Check shell syntax
+        run: bash -n .github/scripts/run-nightprint-android-e2e.sh

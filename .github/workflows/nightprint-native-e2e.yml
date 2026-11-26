@@ -102,6 +102,26 @@ jobs:
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
           script: bash .github/scripts/run-nightprint-android-e2e.sh
+      - name: Verify and stage the exact APK used by instrumentation
+        run: |
+          set -euo pipefail
+          sha256sum -c nightprint-e2e-ci/test-apk.sha256
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          tools="$ANDROID_HOME/build-tools/34.0.0"
+          "$tools/apksigner" verify --print-certs "$apk" | tee nightprint-e2e-ci/apk-signature.txt
+          "$tools/aapt" dump badging "$apk" > nightprint-e2e-ci/apk-badging.txt
+          grep -Fq "package: name='com.u1.slicer.orca.genesis.qa3'" nightprint-e2e-ci/apk-badging.txt
+          git rev-parse HEAD > nightprint-e2e-ci/tested-source.txt
+          mkdir verified-apk
+          cp "$apk" verified-apk/night-print-genesis-qa3-arm64.apk
+          (cd verified-apk && sha256sum night-print-genesis-qa3-arm64.apk | tee SHA256SUMS)
+      - name: Upload the verified installable QA APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightprint-verified-qa3-apk-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          path: verified-apk/
       - name: Upload native instrumentation results (including failed runs)
         if: always()
         uses: actions/upload-artifact@v4
