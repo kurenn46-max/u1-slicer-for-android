@@ -118,6 +118,9 @@ python3 tools/nightcore/verify_native_evidence.py "$out" || audit_result=$?
 if (( native_result != 0 )); then exit "$native_result"; fi
 if (( audit_result != 0 )); then exit "$audit_result"; fi
 
-run_suite ui com.u1.slicer.ui.NightPrintAndroid16UiTest 7
-device logcat -d -v brief -s NIGHTPRINT_EXPORT:I '*:S' > "$out/export-logcat.txt"
+run_suite ui com.u1.slicer.ui.NightPrintAndroid16UiTest 8
+device logcat -d -v brief -s NIGHTPRINT_EXPORT:I NIGHTPRINT_PETG_E2E:I '*:S' > "$out/export-logcat.txt"
 grep -E 'save_bytes=[1-9][0-9]* share_bytes=[1-9][0-9]*' "$out/export-logcat.txt"
+
+# A passing test may still mean PETG was safely HELD rather than printable.
+grep -E 'NIGHTPRINT_PETG_E2E.*status=(HOLD|VERIFIED)' "$out/export-logcat.txt" | tee "$out/petg-outcome.txt"
