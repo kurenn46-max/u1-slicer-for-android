@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from operational_loop import cycle
@@ -80,3 +81,13 @@ class OperationalLoopTests(unittest.TestCase):
         self.assertIn("head_sha", result["changed_fields"])
         self.assertEqual(result["previous_observation"], previous["observation"])
         self.assertEqual((result["status"], result["attempts"]), ("PASS", 1))
+
+    def test_interrupted_repair_does_not_restart(self):
+        self.remove_one()
+        with patch("operational_loop.run", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.execute()
+        previous = json.loads((self.root / "first" / "phase2.json").read_text())
+        result = self.execute("resumed", previous)
+        self.assertEqual(result["status"], "SKIPPED")
+        self.assertEqual(result["prior_result"]["status"], "INTERRUPTED")

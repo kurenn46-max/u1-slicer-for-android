@@ -3,7 +3,7 @@ import hashlib
 import json
 
 from recover_evidence import run
-from verify_native_evidence import validate
+from verify_native_evidence import FILES, validate
 
 
 def write_checkpoint(path, state):
@@ -47,8 +47,12 @@ def cycle(observation, evidence, output, previous, recovery_sha):
                      next_action="Continue when the observed commit or fault changes.")
     else:
         state["next_action"] = "Inspect the original CI run or obtain complete evidence."
-        if cause == "reports_present" or (issues and cause == "audit_evidence_invalid_or_incomplete"):
+        if cause in ("reports_present", "audit_evidence_invalid_or_incomplete"):
             result = output / "recovery"
+            missing = [name for name in FILES if not (evidence / name).exists()]
+            if issues and len(issues) == len(missing):
+                state["history"][fingerprint] = {"status": "INTERRUPTED", "run_id": run_id}
+                state["next_action"] = "Inspect any interrupted repair before reprocessing this fault."
             write_checkpoint(checkpoint, state)
             code = run(evidence, result, observation["checkout_sha"],
                        observation["artifact_url"], 0, recovery_sha)
