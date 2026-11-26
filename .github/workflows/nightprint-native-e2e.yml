@@ -33,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD:app)" = 69d4e1c6a03bb39bdc3b12e27cc05a102b4585ba
-          test "$(git rev-parse HEAD:scripts)" = e9a7f1c85d350dd12a8ce48c6e5e348a2c7a94
+          test "$(git rev-parse HEAD:scripts)" = e9a7f1c85d350dd12a8ce48c6e5e5e348a2c7a94
           endpoint=repos/kurenn46-max/u1-slicer-for-android/actions/artifacts/15103919717
           digest=a0f846b523ef1e92fdf1311c89e1273384ee2f84733f4c0dedbc204ec622c061
           gh api "$endpoint" | jq -e --arg digest "sha256:$digest" '
