@@ -23,11 +23,15 @@ adb logcat -d -v brief -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I AndroidRuntime:E
 } 2>&1 | tee "$out/post-test-device-state.txt"
 adb pull "$reports/nightprint-native-e2e-report.json" "$out/raw-stl-native-evidence.json" || true
 adb pull "$reports/nightprint-3mf-profile-e2e-report.json" "$out/embedded-3mf-native-evidence.json" || true
+audit_result=0
+python3 tools/nightcore/verify_native_evidence.py "$out" || audit_result=$?
 if (( result != 0 )); then
+  grep -A 12 -F 'FATAL EXCEPTION' "$out/native-android-logcat.txt" | head -60 || true
   exit "$result"
 fi
-
-python3 tools/nightcore/verify_native_evidence.py "$out"
+if (( audit_result != 0 )); then
+  exit "$audit_result"
+fi
 
 for report in "$out/raw-stl-native-evidence.json" "$out/embedded-3mf-native-evidence.json"; do
   echo "$(basename "$report")"

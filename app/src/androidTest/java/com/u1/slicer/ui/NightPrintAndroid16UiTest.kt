@@ -9,7 +9,6 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.core.content.FileProvider
-import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.MainActivity
@@ -34,7 +33,7 @@ class NightPrintAndroid16UiTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val app get() = instrumentation.targetContext
 
-    private fun launch(file: File, useA1Mini: Boolean = false): ActivityScenario<MainActivity> {
+    private fun launch(file: File, useA1Mini: Boolean = false, assertions: () -> Unit) {
         if (Build.VERSION.SDK_INT >= 33) {
             instrumentation.uiAutomation.grantRuntimePermission(app.packageName, Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -47,8 +46,11 @@ class NightPrintAndroid16UiTest {
         runBlocking { PrintersRepository(app).replace(PrintersConfig(listOf(printer), printer.id)) }
         val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
         val intent = Intent(Intent.ACTION_VIEW, uri, app, MainActivity::class.java)
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        return ActivityScenario.launch(intent)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        // API 36 displayed the activity and loaded the model while ActivityScenario's
+        // legacy lifecycle monitor stayed at PRE_ON_CREATE. Observe the screen itself.
+        app.startActivity(intent)
+        assertions()
     }
 
     private fun asset(name: String): File = File(app.cacheDir, name).also { file ->
@@ -95,15 +97,15 @@ class NightPrintAndroid16UiTest {
     }
 
     @Test fun stlOpensIntoPrepareScreen() {
-        launch(asset("tetrahedron.stl")).use { await("Slice Model") }
+        launch(asset("tetrahedron.stl")) { await("Slice Model") }
     }
 
     @Test fun threeMfOpensIntoPrepareScreen() {
-        launch(asset("calib-cube-10-dual-colour-merged.3mf")).use { await("Slice Model") }
+        launch(asset("calib-cube-10-dual-colour-merged.3mf")) { await("Slice Model") }
     }
 
     @Test fun tpuJobAppliesSettingsAndCanSliceFromPrepareScreen() {
-        launch(job("TPU", 225, 50), useA1Mini = true).use {
+        launch(job("TPU", 225, 50), useA1Mini = true) {
             await("印刷ジョブを読み込みました")
             await("材料: TPU")
             await("ノズル: 225℃・ベッド: 50℃")
@@ -117,7 +119,7 @@ class NightPrintAndroid16UiTest {
     }
 
     @Test fun petgJobShowsPetgAndItsOwnTemperatures() {
-        launch(job("PETG", 235, 70), useA1Mini = true).use {
+        launch(job("PETG", 235, 70), useA1Mini = true) {
             await("印刷ジョブを読み込みました")
             await("材料: PETG")
             await("ノズル: 235℃・ベッド: 70℃")
@@ -127,7 +129,7 @@ class NightPrintAndroid16UiTest {
     }
 
     @Test fun invalidTemperatureShowsJapaneseError() {
-        launch(job("TPU", 275, 50), useA1Mini = true).use {
+        launch(job("TPU", 275, 50), useA1Mini = true) {
             await("印刷ジョブを開けません")
             await("設定の形式・範囲が正しくありません")
             compose.onNodeWithText("閉じる").performClick()
@@ -137,7 +139,7 @@ class NightPrintAndroid16UiTest {
 
     @Test fun corruptPackageCanBeDismissedWithoutFreezing() {
         val file = File(app.cacheDir, "broken.npjob").apply { writeText("invalid zip") }
-        launch(file).use {
+        launch(file) {
             await("印刷ジョブを開けません")
             compose.onNodeWithText("閉じる").performClick()
             await("Prepare")
@@ -145,7 +147,7 @@ class NightPrintAndroid16UiTest {
     }
 
     @Test fun wrongPrinterIsRejectedBeforeModelLoad() {
-        launch(job("TPU", 225, 50)).use {
+        launch(job("TPU", 225, 50)) {
             await("印刷ジョブを開けません")
             await("プリンター画面でBambu Lab A1 miniを選択")
             compose.onNodeWithText("閉じる").performClick()
