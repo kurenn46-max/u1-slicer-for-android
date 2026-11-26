@@ -1,0 +1,425 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NIGHT CORE Phase 3.1 directive bundle",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "project": {
+      "const": "kurenn46-max/u1-slicer-for-android"
+    },
+    "source_checkpoint": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "resumed_from_run_id": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "run_id",
+        "attempt",
+        "resumed_from_run_id"
+      ],
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "handoff_mode": {
+          "const": "file_only"
+        },
+        "codex_sessions_started": {
+          "const": 0
+        },
+        "ci_reruns_requested": {
+          "const": 0
+        },
+        "completed_audit_repairs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pr": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "commit_sha": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{40}$"
+              },
+              "action": {
+                "const": "restore_missing_audit_json_and_revalidate"
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3
+              }
+            },
+            "required": [
+              "pr",
+              "commit_sha",
+              "action",
+              "attempts"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "handoff_mode",
+        "codex_sessions_started",
+        "ci_reruns_requested",
+        "completed_audit_repairs"
+      ],
+      "additionalProperties": false
+    },
+    "pull_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pr": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "commit_sha": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "base_sha": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "checks": {
+            "enum": [
+              "PASS",
+              "FAIL",
+              "HOLD",
+              "PENDING",
+              "UNVERIFIED"
+            ]
+          },
+          "ci_urls": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^https://github[.]com/kurenn46-max/u1-slicer-for-android/actions/runs/[0-9]+(/job/[0-9]+)?$"
+            }
+          },
+          "android_tests": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "passed": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "failed": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "skipped": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "passed",
+                  "failed",
+                  "skipped"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "pr",
+          "commit_sha",
+          "base_sha",
+          "checks",
+          "ci_urls",
+          "android_tests"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "directives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pr": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "commit_sha": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "base_sha": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "kind": {
+            "enum": [
+              "stale_arm64_jni",
+              "maven_central_rate_limit",
+              "adb_disconnect",
+              "project_assertion_failure",
+              "unclassified_ci_failure"
+            ]
+          },
+          "category": {
+            "enum": [
+              "source_defect",
+              "build_mismatch",
+              "transient_external",
+              "test_environment",
+              "unclassified"
+            ]
+          },
+          "suspected_cause": {
+            "type": "string",
+            "minLength": 1
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "run_id": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "ci_url": {
+                  "type": "string",
+                  "pattern": "^https://github[.]com/kurenn46-max/u1-slicer-for-android/actions/runs/[0-9]+(/job/[0-9]+)?$"
+                },
+                "log_url": {
+                  "type": "string",
+                  "pattern": "^https://github[.]com/kurenn46-max/u1-slicer-for-android/actions/runs/[0-9]+(/job/[0-9]+)?$"
+                }
+              },
+              "required": [
+                "run_id",
+                "attempt",
+                "ci_url",
+                "log_url"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1
+          },
+          "recommended_fix": {
+            "type": "string",
+            "minLength": 1
+          },
+          "safe_to_run_automatically": {
+            "const": false
+          },
+          "required_tests": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "acceptance": {
+            "type": "string",
+            "minLength": 1
+          },
+          "unverified": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "handoff": {
+            "type": "string",
+            "minLength": 1
+          },
+          "blocked_by": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "status": {
+            "enum": [
+              "review_required",
+              "blocked_by_dependency",
+              "diagnosis_only"
+            ]
+          }
+        },
+        "required": [
+          "pr",
+          "commit_sha",
+          "base_sha",
+          "id",
+          "kind",
+          "category",
+          "suspected_cause",
+          "confidence",
+          "evidence",
+          "recommended_fix",
+          "safe_to_run_automatically",
+          "required_tests",
+          "acceptance",
+          "unverified",
+          "handoff",
+          "blocked_by",
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pr": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "category": {
+            "const": "test_environment"
+          },
+          "kind": {
+            "const": "adb_disconnect"
+          },
+          "old_commit_sha": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "old_ci_url": {
+            "type": "string",
+            "pattern": "^https://github[.]com/kurenn46-max/u1-slicer-for-android/actions/runs/[0-9]+(/job/[0-9]+)?$"
+          },
+          "old_log_url": {
+            "type": "string",
+            "pattern": "^https://github[.]com/kurenn46-max/u1-slicer-for-android/actions/runs/[0-9]+(/job/[0-9]+)?$"
+          },
+          "current_commit_sha": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "current_ci_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^https://github[.]com/kurenn46-max/u1-slicer-for-android/actions/runs/[0-9]+(/job/[0-9]+)?$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_tests": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "passed": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "failed": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "skipped": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "passed",
+                  "failed",
+                  "skipped"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "not_reproduced_at_current_head",
+              "observed_at_current_head",
+              "unverified_at_current_head"
+            ]
+          }
+        },
+        "required": [
+          "pr",
+          "category",
+          "kind",
+          "old_commit_sha",
+          "old_ci_url",
+          "old_log_url",
+          "current_commit_sha",
+          "current_ci_url",
+          "current_tests",
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "project",
+    "source_checkpoint",
+    "execution",
+    "pull_requests",
+    "directives",
+    "history"
+  ],
+  "additionalProperties": false
+}

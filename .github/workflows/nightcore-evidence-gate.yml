@@ -13,6 +13,10 @@ on:
       - 'tools/nightcore/github_supervisor.py'
       - 'tools/nightcore/nightprint_monitor.py'
       - 'tools/nightcore/test_supervision.py'
+      - 'tools/nightcore/directive_rules.py'
+      - 'tools/nightcore/directives.py'
+      - 'tools/nightcore/directives.schema.json'
+      - 'tools/nightcore/test_directives.py'
       - '.github/scripts/run-nightprint-android-e2e.sh'
       - '.github/workflows/nightcore-evidence-gate.yml'
   workflow_dispatch:
@@ -31,6 +35,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Make the JSON Schema validator available
+        run: |
+          if ! python3 -c 'import jsonschema'; then
+            python3 -m venv "$RUNNER_TEMP/nightcore-schema"
+            "$RUNNER_TEMP/nightcore-schema/bin/pip" install --disable-pip-version-check --timeout 12 --retries 1 'jsonschema==4.25.1'
+            echo "$RUNNER_TEMP/nightcore-schema/bin" >> "$GITHUB_PATH"
+          fi
       - name: Check evidence gate and fail-closed cases
         run: python3 -m unittest discover -s tools/nightcore -p 'test_*.py' -v
       - name: Check shell syntax
@@ -110,13 +121,15 @@ jobs:
   supervisor:
     if: >-
       github.repository == 'kurenn46-max/u1-slicer-for-android' &&
-      ((github.event_name == 'workflow_dispatch' && github.ref_name == 'experiment/nightcore-supervisor-v3') ||
+      ((github.event_name == 'workflow_dispatch' && contains(fromJSON('["experiment/nightcore-supervisor-v3","experiment/nightcore-command-v31"]'), github.ref_name)) ||
        (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository &&
-        github.head_ref == 'experiment/nightcore-supervisor-v3') ||
+        contains(fromJSON('["experiment/nightcore-supervisor-v3","experiment/nightcore-command-v31"]'), github.head_ref)) ||
        (github.event_name == 'schedule' && github.ref_name == github.event.repository.default_branch &&
         vars.NIGHTCORE_PHASE3_SCHEDULE_ENABLED == 'true'))
     runs-on: ubuntu-24.04
     timeout-minutes: 8
+    env:
+      NIGHTCORE_OBSERVATION_BRANCH: ${{ (github.head_ref == 'experiment/nightcore-command-v31' || github.ref_name == 'experiment/nightcore-command-v31') && 'experiment/nightcore-command-v31' || 'experiment/nightcore-supervisor-v3' }}
     concurrency:
       group: nightcore-phase3-supervision
       cancel-in-progress: false
@@ -130,18 +143,38 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           timeout --kill-after=10s 4m python3 tools/nightcore/github_supervisor.py \
-            --run-id "$GITHUB_RUN_ID" --default-branch "$DEFAULT_BRANCH" \
+            --branch "$NIGHTCORE_OBSERVATION_BRANCH" --run-id "$GITHUB_RUN_ID" --default-branch "$DEFAULT_BRANCH" \
             --work "$RUNNER_TEMP/nightcore-supervision" --output nightcore-phase3
       - name: Exercise Phase 3 on real Android evidence
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && env.NIGHTCORE_OBSERVATION_BRANCH == 'experiment/nightcore-supervisor-v3'
         env:
           GH_TOKEN: ${{ github.token }}
         run: timeout --kill-after=5s 90s python3 tools/nightcore/test_supervision.py --real-evidence
+      - name: Make the JSON Schema validator available
+        if: env.NIGHTCORE_OBSERVATION_BRANCH == 'experiment/nightcore-command-v31'
+        run: |
+          if ! python3 -c 'import jsonschema'; then
+            python3 -m venv "$RUNNER_TEMP/nightcore-schema"
+            "$RUNNER_TEMP/nightcore-schema/bin/pip" install --disable-pip-version-check --timeout 12 --retries 1 'jsonschema==4.25.1'
+            echo "$RUNNER_TEMP/nightcore-schema/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Generate and validate the Night handoff
+        if: env.NIGHTCORE_OBSERVATION_BRANCH == 'experiment/nightcore-command-v31'
+        run: python3 tools/nightcore/directives.py nightcore-phase31 --checkpoint nightcore-phase3/phase3.json
+      - name: Verify Phase 3.1 against original CI logs
+        if: github.event_name == 'pull_request' && env.NIGHTCORE_OBSERVATION_BRANCH == 'experiment/nightcore-command-v31'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          timeout --kill-after=5s 140s python3 tools/nightcore/test_directives.py --live nightcore-phase31 nightcore-phase3/phase3.json
       - name: Publish the supervision summary
         if: always()
         run: |
           if [ -s nightcore-phase3/summary.md ]; then
             cat nightcore-phase3/summary.md >> "$GITHUB_STEP_SUMMARY"
+            if [ -s nightcore-phase31/summary.md ]; then
+              cat nightcore-phase31/summary.md >> "$GITHUB_STEP_SUMMARY"
+            fi
           else
             echo "NIGHT CORE did not reach its first checkpoint." >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -151,5 +184,14 @@ jobs:
         with:
           name: nightcore-phase3-state-${{ github.run_attempt }}
           path: nightcore-phase3/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Save the validated command bundle
+        if: always() && env.NIGHTCORE_OBSERVATION_BRANCH == 'experiment/nightcore-command-v31'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightcore-phase31-directives
+          path: nightcore-phase31/
           if-no-files-found: error
           retention-days: 14
