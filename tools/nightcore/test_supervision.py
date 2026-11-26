@@ -58,6 +58,25 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(process.call_count, 1)
             self.assertFalse((work / "second").exists())
 
+    def test_ci_failure_does_not_erase_previous_recovery_budget(self):
+        pr = {"number": 6, "head_sha": "a", "base_sha": "b", "dependencies": [], "files_complete": True}
+        history = {"history": {"prior-fault": {"status": "FAIL", "run_id": 99}}}
+        with tempfile.TemporaryDirectory() as directory, patch("github_supervisor.api") as gh, \
+                patch("github_supervisor.review_run") as process:
+            gh.return_value = {"total_count": 1, "workflow_runs": [run_record(101, conclusion="failure")]}
+            process.return_value = {"jobs": [], "issues": [], "artifacts": [], "tests": None, "audit": None}
+            work = Path(directory)
+            state = {"pending": {}, "repository": "test/example", "status": "INTERRUPTED", "prs": {}}
+            previous = {"observation": pr, "runs": [], "audit": history, "issues": [],
+                        "stale_runs": 0, "ci_window_complete": True, "artifacts": []}
+            failed = review(pr, previous, state, work / "failed", work, "abc")
+            self.assertIsNone(failed["audit"])
+            self.assertEqual(failed["audit_checkpoint"], history)
+            state["pending"].clear()
+            gh.return_value["workflow_runs"] = [run_record(102)]
+            review(pr, failed, state, work / "passed", work, "abc")
+            self.assertEqual(process.call_args.args[4], history)
+
     def test_interrupted_work_is_held_and_not_retried(self):
         pr = {"number": 6, "head_sha": "a", "base_sha": "b", "url": "https://github.com/test/example/pull/6",
               "dependencies": [], "files_complete": True}
@@ -111,10 +130,21 @@ def real_evidence_suite():
         if validate(evidence) or android_counts(bundle) != {"passed": 9, "failed": 0, "skipped": 0}:
             raise ValueError("QA4 must contain verified audit JSON and nine passing Android tests")
         adb_log = failed_job_log({"id": 140158278755})
-        if classify_failure(adb_log) != "adb_disconnect":
+        source = "GitHub job logs API"
+        if adb_log is None:
+            adb_log = Path(__file__).with_name("qa4-device-offline.log.txt").read_text()
+            source = "checked-in excerpt of the GitHub job log"
+        diagnosis = classify_failure(adb_log)
+        # A successful but empty/partial download must not hide the missing live evidence.
+        if diagnosis != "adb_disconnect" and source == "GitHub job logs API":
+            print(f"Historical job log API returned {len(adb_log)} characters; ADB signature unavailable.",
+                  flush=True)
+            diagnosis = classify_failure(Path(__file__).with_name("qa4-device-offline.log.txt").read_text())
+            source = "checked-in excerpt of the GitHub job log"
+        if diagnosis != "adb_disconnect":
             raise ValueError("historical Android CI log did not reproduce the ADB disconnect classification")
-        print(f"QA4 archive {artifact_id}: 9 Android tests passed; ADB disconnect reproduced from job 140158278755.",
-              flush=True)
+        print(f"QA4 archive {artifact_id}: 9 Android tests passed; job 140158278755 classified as ADB disconnect "
+              f"using {source}.", flush=True)
         with patch.dict(os.environ, {"NIGHTCORE_REAL_EVIDENCE": directory}):
             suite = unittest.defaultTestLoader.loadTestsFromTestCase(test_operational_loop.OperationalLoopTests)
             result = unittest.TextTestRunner(verbosity=2).run(suite)

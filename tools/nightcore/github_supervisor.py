@@ -20,8 +20,10 @@ WORKFLOW = "actions/workflows/nightcore-evidence-gate.yml/runs"
 BRANCH = "experiment/nightcore-supervisor-v3"
 CHECKPOINT = "phase3.json"
 BUDGET = 25
+DIAGNOSTICS_VERSION = 2
 API_ERRORS = (OSError, ValueError, subprocess.SubprocessError, BadZipFile, ParseError)
 UNSUCCESSFUL = {"failure", "timed_out", "cancelled", "action_required", "startup_failure"}
+RUN_FIELDS = ("id", "workflow_id", "attempt", "path", "url", "name", "status", "conclusion")
 
 
 def read_previous(branch, default_branch, run_id, attempt):
@@ -49,7 +51,8 @@ def read_previous(branch, default_branch, run_id, attempt):
             if (previous.get("schema") != 3 or previous.get("repository") != REPO
                     or previous.get("run_id") != run["id"] or previous.get("run_attempt") != saved_attempt):
                 raise ValueError("invalid Phase 3 checkpoint")
-            return previous, artifact["id"]
+            if previous.get("previous_loaded") is not False:
+                return previous, artifact["id"]
     return None, None
 
 
@@ -96,13 +99,17 @@ def run_view(run):
 
 
 def failed_job_log(job):
-    try:
-        return subprocess.check_output(
-            ["gh", "api", f"{API}/actions/jobs/{int(job['id'])}/logs"],
-            timeout=20, stderr=subprocess.DEVNULL,
-        )[-250_000:].decode("utf-8", errors="replace")
-    except (OSError, subprocess.SubprocessError):
-        return None
+    job_id = str(int(job["id"]))
+    # Job-log redirects may be unavailable even when a run's log archive works.
+    for command in (["gh", "api", f"{API}/actions/jobs/{job_id}/logs"],
+                    ["gh", "run", "view", "--repo", REPO, "--job", job_id, "--log"]):
+        try:
+            result = subprocess.check_output(command, timeout=12, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if result.strip():
+            return result[-250_000:].decode("utf-8", errors="replace")
+    return None
 
 
 def issue(run, kind, job=None):
@@ -135,10 +142,13 @@ def review_run(run, pr, work, out, prior, source_sha):
     result["jobs"] = [{key: job[key] for key in ("id", "name", "conclusion", "html_url")} for job in jobs]
     if run["conclusion"] in UNSUCCESSFUL:
         failed = [job for job in jobs if job["conclusion"] in UNSUCCESSFUL]
-        result["issues"] = [
-            issue(run, classify_failure(failed_job_log(job)) if pr["head_repo_id"] == pr["base_repo_id"]
-                  else "unclassified_ci_failure", job) for job in failed[:2]
-        ] or [issue(run, "unclassified_ci_failure")]
+        for job in failed[:2]:
+            log = failed_job_log(job) if pr["head_repo_id"] == pr["base_repo_id"] else None
+            diagnosis = issue(run, classify_failure(log), job)
+            diagnosis["log_available"] = log is not None
+            result["issues"].append(diagnosis)
+        if not result["issues"]:
+            result["issues"].append(issue(run, "unclassified_ci_failure"))
     artifacts = api(f"actions/runs/{run_id}/artifacts?per_page=50")["artifacts"]
     artifacts = [
         item for item in artifacts if not item["expired"] and item.get("workflow_run")
@@ -160,7 +170,10 @@ def review_run(run, pr, work, out, prior, source_sha):
         result["audit_error"] = str(error)
         return result
     result.update(audit=audit, tests=tests)
-    if audit and audit["status"] == "PASS" and tests and not tests["failed"] and not tests["skipped"]:
+    verified = audit and (
+        audit["status"] == "PASS" or audit["status"] == "SKIPPED" and audit["cause"] == "reports_present"
+    )
+    if verified and tests and not tests["failed"] and not tests["skipped"]:
         result["artifacts"] = published_artifacts(run, artifacts)
     elif run["conclusion"] == "success" or audit:
         result["issues"].append(issue(run, "android_evidence_unverified"))
@@ -175,10 +188,12 @@ def review(pr, prior, state, work, output, source_sha):
     complete = runs_data["total_count"] <= len(runs_data["workflow_runs"])
     old_observation = prior["observation"] if prior else None
     changes = difference(pr, old_observation)
-    if prior and views != [{key: run[key] for key in run_view_template} for run in prior["runs"]]:
+    if prior and views != [{key: run[key] for key in RUN_FIELDS} for run in prior["runs"]]:
         changes.append("ci")
     if prior and (stale != prior["stale_runs"] or complete != prior["ci_window_complete"]):
         changes.append("ci_coverage")
+    if prior and prior.get("diagnostics_version") != DIAGNOSTICS_VERSION:
+        changes.append("diagnostics")
     if prior and any(datetime.fromisoformat(item["expires_at"]) <= datetime.now(timezone.utc)
                      for item in prior["artifacts"]):
         changes.append("artifact_expired")
@@ -193,11 +208,17 @@ def review(pr, prior, state, work, output, source_sha):
     checks = summarize_checks(matched)
     issues, artifacts, jobs, resolved, repairs = [], [], {}, [], []
     audit = tests = None
+    audit_checkpoint = prior.get("audit_checkpoint", prior["audit"]) if prior else None
     if interrupted:
         issues.append({"kind": "interrupted_review", "url": pr["url"]})
     else:
         for run in matched:
-            details = review_run(run, pr, work, output / f"audit-pr-{number}", prior and prior["audit"], source_sha)
+            audit_output = output / f"audit-pr-{number}"
+            details = review_run(run, pr, work, audit_output, audit_checkpoint, source_sha)
+            if details["audit"]:
+                audit_checkpoint = details["audit"]
+                # The source log already has a verified artifact link; keep the reports and hashes.
+                (audit_output / "recovery" / "evidence" / "native-android-logcat.txt").unlink(missing_ok=True)
             issues.extend(details["issues"])
             artifacts.extend(details["artifacts"])
             jobs[run["id"]] = details["jobs"]
@@ -214,7 +235,9 @@ def review(pr, prior, state, work, output, source_sha):
             workflow = old.get("workflow_id")
             if workflow in passing - unresolved_workflows:
                 resolved.append(old)
-            elif workflow and workflow not in unresolved_workflows:
+            elif workflow and not any(
+                item.get("workflow_id") == workflow and item["kind"] == old["kind"] for item in issues
+            ):
                 issues.append({**old, "historical": True})
     if any(not parent["base_matches"] for parent in pr["dependencies"]):
         issues.append({"kind": "dependency_changed", "url": pr["url"]})
@@ -236,11 +259,9 @@ def review(pr, prior, state, work, output, source_sha):
         "observation": pr, "changes": changes, "checks": checks, "stale_runs": stale,
         "ci_window_complete": complete, "runs": [{**view, "jobs": jobs.get(view["id"], [])} for view in views],
         "issues": issues, "resolved": resolved, "repairs": repairs,
-        "artifacts": artifacts, "audit": audit, "tests": tests, "next_action": next_action,
+        "artifacts": artifacts, "audit": audit, "audit_checkpoint": audit_checkpoint,
+        "tests": tests, "next_action": next_action, "diagnostics_version": DIAGNOSTICS_VERSION,
     }
-
-
-run_view_template = ("id", "workflow_id", "attempt", "path", "url", "name", "status", "conclusion")
 
 
 def save(output, state):
@@ -252,7 +273,7 @@ def supervise(args):
     output = args.output
     output.mkdir(parents=True, exist_ok=False)
     state = {"schema": 3, "repository": REPO, "run_id": args.run_id, "run_attempt": args.attempt,
-             "status": "INTERRUPTED", "prs": {}, "pending": {}, "closed": [],
+             "status": "INTERRUPTED", "previous_loaded": False, "prs": {}, "pending": {}, "closed": [],
              "release_authorized": False}
     save(output, state)
     try:
@@ -260,7 +281,8 @@ def supervise(args):
         if previous:
             state.update(prs=previous["prs"].copy(), pending=previous["pending"].copy(),
                          resumed_from={"run_id": previous["run_id"], "artifact_id": checkpoint})
-            save(output, state)
+        state["previous_loaded"] = True
+        save(output, state)
         args.work.mkdir(parents=True)
         source_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
         state["source_sha"] = source_sha
