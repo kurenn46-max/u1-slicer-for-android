@@ -3,6 +3,11 @@ on:
   pull_request:
     paths:
       - '.github/workflows/nightprint-arm64-stage3.yml'
+      - '.github/workflows/nightprint-native-e2e.yml'
+      - 'app/src/main/cpp/**'
+      - 'app/src/main/java/com/u1/slicer/data/NightPrint**'
+      - 'app/src/main/java/com/u1/slicer/bambu/**'
+      - 'app/src/androidTest/java/com/u1/slicer/slicing/NightPrintNativeE2ETest.kt'
   workflow_dispatch:
 permissions:
   contents: read
@@ -235,5 +240,16 @@ jobs:
         if: success()
         with:
           name: nightprint-native-engine-candidate
-          path: native-candidate/libprusaslicer-jni.so
+          if-no-files-found: error
+          path: |
+            native-candidate/libprusaslicer-jni.so
+            native-candidate/source.txt
+            native-candidate/candidate.sha256
           retention-days: 7
+
+  native-e2e:
+    needs: native-candidate
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/nightprint-native-e2e.yml
