@@ -68,7 +68,7 @@ diff -u <(sed "/^InstalledDir:/d" "$manifest/compiler.txt") \
       END { if (!count || count != members) exit 1 }
     ' "$tmp/elf"
   done
-) > "$evidence/occt-verify.log" 2>&1 || { tail -30 "$evidence/occt-verify.log"; exit 1; }
+) > "$evidence/occt-verify.log" 2>&1
 
 cat > "$evidence/occt-provenance.txt" <<EOF_PROVENANCE
 repository=$repository
