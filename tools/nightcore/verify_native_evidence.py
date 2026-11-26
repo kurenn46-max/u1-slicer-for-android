@@ -55,9 +55,10 @@ def recover_from_logcat(directory):
     }
     for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
         for tag, filename in tags.items():
-            if not re.search(r"\\b" + re.escape(tag) + r"\\s*:", line):
+            match = re.search(r"\b" + re.escape(tag) + r"\s*:\s*(\{.*\})\s*$", line)
+            if not match:
                 continue
-            candidate = line.split(tag + ":", 1)[-1].strip()
+            candidate = match.group(1)
             if not candidate.startswith("{") or not candidate.endswith("}"):
                 continue
             try:
