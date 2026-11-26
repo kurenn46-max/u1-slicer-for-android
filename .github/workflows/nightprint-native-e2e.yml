@@ -122,6 +122,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: verified-apk/
+      - name: Record Japanese product diagnostics and handoff JSON
+        if: always()
+        env:
+          NIGHTPRINT_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python3 .github/scripts/nightprint-product-evidence.py nightprint-e2e-ci --summary | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Upload native instrumentation results (including failed runs)
         if: always()
         uses: actions/upload-artifact@v4

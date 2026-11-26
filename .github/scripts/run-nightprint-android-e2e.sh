@@ -59,7 +59,7 @@ device shell getprop ro.dalvik.vm.native.bridge >> "$out/device-abi.txt"
 device logcat -c
 # Stream before the tests so evidence already emitted survives a disconnect.
 timeout -k 2s 20m adb -s "$serial" logcat -v brief -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I \
-  NIGHTPRINT_EXPORT:I AndroidRuntime:E ActivityManager:E '*:S' > "$out/live-logcat.txt" 2>&1 &
+  NIGHTPRINT_EXPORT:I NIGHTPRINT_PETG_E2E:I NIGHTPRINT_QUALITY:I AndroidRuntime:E ActivityManager:E '*:S' > "$out/live-logcat.txt" 2>&1 &
 log_pid=$!
 
 run_suite() {
@@ -69,10 +69,11 @@ run_suite() {
     echo "ADB lost before $suite suite" >&2
     return 69
   fi
+  rm -rf -- "$results" || return
   timeout -k 15s 7m bash ./gradlew --no-daemon :app:connectedDebugAndroidTest \
     "-Pandroid.testInstrumentationRunnerArguments.class=$class" 2>&1 | tee "$out/$suite-gradle.log" || result=$?
   if [[ -d "$results" ]]; then
-    cp -a "$results" "$out/$suite-results"
+    cp -a "$results" "$out/$suite-results" || return
   fi
   printf '%s\n' "$result" > "$out/$suite-exit-code.txt"
   if ! connection_state; then
@@ -82,31 +83,43 @@ run_suite() {
   if (( result != 0 )); then
     return "$result"
   fi
-  python3 - "$out/$suite-results" "$class" "$expected" <<'PY'
+  python3 - "$out/$suite-results" "$class" "$expected" <<'PY' || return
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-directory, classname, expected = sys.argv[1:]
+directory, classnames, expected = sys.argv[1:]
 cases = [
-    case for report in Path(directory).rglob("TEST-*.xml")
+    (case.get("classname"), case.get("name"), case)
+    for report in Path(directory).rglob("TEST-*.xml")
     for case in ET.parse(report).iter("testcase")
-    if case.get("classname") == classname
 ]
-names = {case.get("name") for case in cases}
-if len(cases) != int(expected) or len(names) != len(cases):
-    raise SystemExit(f"{classname}: expected {expected} distinct tests, found {len(names)}")
-for case in cases:
-    if any(case.find(tag) is not None for tag in ("failure", "error", "skipped")):
-        raise SystemExit(f"{classname}: failed or skipped {case.get('name')}")
-print(f"{classname}: {len(cases)}/{expected} passed")
+names = {(classname, name) for classname, name, _ in cases}
+if len(names) != len(cases) or any(not name for _, name in names):
+    raise SystemExit("Duplicate or unnamed JUnit testcase")
+classes = dict(zip(classnames.split(","), map(int, expected.split(",")), strict=True))
+if {classname for classname, _, _ in cases} != classes.keys():
+    raise SystemExit("JUnit classes do not match the selected suites")
+for classname, count in classes.items():
+    selected = [(name, case) for group, name, case in cases if group == classname]
+    if len(selected) != count:
+        raise SystemExit(f"{classname}: expected {count} distinct tests, found {len(selected)}")
+    if classname.endswith("NightPrintAndroid16UiTest") and not any(
+        name == "petgJobSliceReachesVerifiedOutputOrExplicitSafetyHold" for name, _ in selected
+    ):
+        raise SystemExit("Missing PETG UI acceptance test")
+    for name, case in selected:
+        if any(case.find(tag) is not None for tag in ("failure", "error", "skipped")):
+            raise SystemExit(f"{classname}: failed or skipped {name}")
+    print(f"{classname}: {count}/{count} passed")
 PY
+  touch "$out/$suite-junit-passed"
 }
 
 native_result=0
-run_suite native com.u1.slicer.slicing.NightPrintNativeE2ETest 2 || native_result=$?
+run_suite native com.u1.slicer.slicing.NightPrintNativeE2ETest,com.u1.slicer.slicing.NightPrintQualityE2ETest 2,2 || native_result=$?
 if connection_state; then
-  device logcat -d -v brief -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I AndroidRuntime:E '*:S' \
+  device logcat -d -v brief -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I NIGHTPRINT_QUALITY:I AndroidRuntime:E '*:S' \
     > "$out/native-android-logcat.txt" || cp "$out/live-logcat.txt" "$out/native-android-logcat.txt"
   device pull "$reports/nightprint-native-e2e-report.json" "$out/raw-stl-native-evidence.json" || true
   device pull "$reports/nightprint-3mf-profile-e2e-report.json" "$out/embedded-3mf-native-evidence.json" || true
@@ -115,12 +128,13 @@ else
 fi
 audit_result=0
 python3 tools/nightcore/verify_native_evidence.py "$out" || audit_result=$?
+ui_result=0
+run_suite ui com.u1.slicer.ui.NightPrintAndroid16UiTest 8 || ui_result=$?
+device logcat -d -v brief -s NIGHTPRINT_EXPORT:I NIGHTPRINT_PETG_E2E:I '*:S' > "$out/export-logcat.txt" || cp "$out/live-logcat.txt" "$out/export-logcat.txt"
 if (( native_result != 0 )); then exit "$native_result"; fi
 if (( audit_result != 0 )); then exit "$audit_result"; fi
-
-run_suite ui com.u1.slicer.ui.NightPrintAndroid16UiTest 8
-device logcat -d -v brief -s NIGHTPRINT_EXPORT:I NIGHTPRINT_PETG_E2E:I '*:S' > "$out/export-logcat.txt"
+if (( ui_result != 0 )); then exit "$ui_result"; fi
 grep -E 'save_bytes=[1-9][0-9]* share_bytes=[1-9][0-9]*' "$out/export-logcat.txt"
 
 # A passing test may still mean PETG was safely HELD rather than printable.
-grep -E 'NIGHTPRINT_PETG_E2E.*status=(HOLD|VERIFIED)' "$out/export-logcat.txt" | tee "$out/petg-outcome.txt"
+python3 .github/scripts/nightprint-product-evidence.py "$out" --verify
