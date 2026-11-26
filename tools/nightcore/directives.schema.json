@@ -1,0 +1,151 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NIGHT CORE Phase 3.1 directive bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "project", "source_checkpoint", "execution", "pull_requests", "directives", "history"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "project": {"const": "kurenn46-max/u1-slicer-for-android"},
+    "source_checkpoint": {"$ref": "#/definitions/checkpoint"},
+    "execution": {"$ref": "#/definitions/execution"},
+    "pull_requests": {"type": "array", "items": {"$ref": "#/definitions/pr"}},
+    "directives": {"type": "array", "items": {"$ref": "#/definitions/directive"}},
+    "history": {"type": "array", "items": {"$ref": "#/definitions/history"}}
+  },
+  "definitions": {
+    "positive": {"type": "integer", "minimum": 1},
+    "count": {"type": "integer", "minimum": 0},
+    "sha": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+    "key": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "url": {
+      "type": "string",
+      "pattern": "^https://github[.]com/kurenn46-max/u1-slicer-for-android/actions/runs/[0-9]+(/job/[0-9]+)?$"
+    },
+    "text": {"type": "string", "minLength": 1},
+    "texts": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/text"}},
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "attempt", "resumed_from_run_id"],
+      "properties": {
+        "run_id": {"$ref": "#/definitions/positive"},
+        "attempt": {"$ref": "#/definitions/positive"},
+        "resumed_from_run_id": {"anyOf": [{"$ref": "#/definitions/positive"}, {"type": "null"}]}
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["handoff_mode", "codex_sessions_started", "ci_reruns_requested", "completed_audit_repairs"],
+      "properties": {
+        "handoff_mode": {"const": "file_only"},
+        "codex_sessions_started": {"const": 0},
+        "ci_reruns_requested": {"const": 0},
+        "completed_audit_repairs": {"type": "array", "items": {"$ref": "#/definitions/repair"}}
+      }
+    },
+    "repair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pr", "commit_sha", "action", "attempts"],
+      "properties": {
+        "pr": {"$ref": "#/definitions/positive"},
+        "commit_sha": {"$ref": "#/definitions/sha"},
+        "action": {"const": "restore_missing_audit_json_and_revalidate"},
+        "attempts": {"type": "integer", "minimum": 1, "maximum": 3}
+      }
+    },
+    "test_counts": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["passed", "failed", "skipped"],
+      "properties": {
+        "passed": {"$ref": "#/definitions/count"},
+        "failed": {"$ref": "#/definitions/count"},
+        "skipped": {"$ref": "#/definitions/count"}
+      }
+    },
+    "pr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pr", "commit_sha", "base_sha", "checks", "ci_urls", "android_tests"],
+      "properties": {
+        "pr": {"$ref": "#/definitions/positive"},
+        "commit_sha": {"$ref": "#/definitions/sha"},
+        "base_sha": {"$ref": "#/definitions/sha"},
+        "checks": {"enum": ["PASS", "FAIL", "HOLD", "PENDING", "UNVERIFIED"]},
+        "ci_urls": {"type": "array", "items": {"$ref": "#/definitions/url"}},
+        "android_tests": {"$ref": "#/definitions/test_counts"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "attempt", "ci_url", "log_url"],
+      "properties": {
+        "run_id": {"$ref": "#/definitions/positive"},
+        "attempt": {"$ref": "#/definitions/positive"},
+        "ci_url": {"$ref": "#/definitions/url"},
+        "log_url": {"$ref": "#/definitions/url"}
+      }
+    },
+    "directive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "pr", "commit_sha", "base_sha", "kind", "category", "confidence", "suspected_cause", "evidence",
+        "recommended_fix", "safe_to_run_automatically", "required_tests", "acceptance", "unverified",
+        "blocked_by", "status", "handoff"
+      ],
+      "properties": {
+        "id": {"$ref": "#/definitions/key"},
+        "pr": {"$ref": "#/definitions/positive"},
+        "commit_sha": {"$ref": "#/definitions/sha"},
+        "base_sha": {"$ref": "#/definitions/sha"},
+        "kind": {
+          "enum": [
+            "stale_arm64_jni", "maven_central_rate_limit", "dependency_rate_limit", "adb_disconnect",
+            "project_assertion_failure", "unclassified_ci_failure"
+          ]
+        },
+        "category": {
+          "enum": ["source_defect", "build_mismatch", "transient_external", "test_environment", "unclassified"]
+        },
+        "confidence": {"enum": ["high", "medium", "low"]},
+        "suspected_cause": {"$ref": "#/definitions/text"},
+        "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/evidence"}},
+        "recommended_fix": {"$ref": "#/definitions/text"},
+        "safe_to_run_automatically": {"const": false},
+        "required_tests": {"$ref": "#/definitions/texts"},
+        "acceptance": {"$ref": "#/definitions/text"},
+        "unverified": {"$ref": "#/definitions/texts"},
+        "blocked_by": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/definitions/key"}},
+        "status": {"enum": ["review_required", "blocked_by_dependency", "diagnosis_only"]},
+        "handoff": {"$ref": "#/definitions/text"}
+      }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pr", "kind", "category", "old_commit_sha", "old_ci_url", "old_log_url",
+        "current_commit_sha", "current_ci_url", "current_tests", "status"
+      ],
+      "properties": {
+        "pr": {"$ref": "#/definitions/positive"},
+        "kind": {"const": "adb_disconnect"},
+        "category": {"const": "test_environment"},
+        "old_commit_sha": {"$ref": "#/definitions/sha"},
+        "old_ci_url": {"$ref": "#/definitions/url"},
+        "old_log_url": {"$ref": "#/definitions/url"},
+        "current_commit_sha": {"$ref": "#/definitions/sha"},
+        "current_ci_url": {"anyOf": [{"$ref": "#/definitions/url"}, {"type": "null"}]},
+        "current_tests": {"$ref": "#/definitions/test_counts"},
+        "status": {
+          "enum": ["not_reproduced_at_current_head", "observed_at_current_head", "unverified_at_current_head"]
+        }
+      }
+    }
+  }
+}

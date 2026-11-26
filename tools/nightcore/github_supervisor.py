@@ -18,9 +18,10 @@ from supervision import current_runs, dependencies, difference, render_summary, 
 
 WORKFLOW = "actions/workflows/nightcore-evidence-gate.yml/runs"
 BRANCH = "experiment/nightcore-supervisor-v3"
+COMMAND_BRANCH = "experiment/nightcore-command-v31"
 CHECKPOINT = "phase3.json"
 BUDGET = 25
-DIAGNOSTICS_VERSION = 3
+DIAGNOSTICS_VERSION = 4
 API_ERRORS = (OSError, ValueError, subprocess.SubprocessError, BadZipFile, ParseError)
 UNSUCCESSFUL = {"failure", "timed_out", "cancelled", "action_required", "startup_failure"}
 RUN_FIELDS = ("id", "workflow_id", "attempt", "path", "url", "name", "status", "conclusion")
@@ -67,13 +68,13 @@ def snapshot(pr):
     }
 
 
-def list_prs():
+def list_prs(branch=BRANCH):
     opened = api(f"pulls?state=open&per_page={BUDGET + 1}")
     if len(opened) > BUDGET:
         raise ValueError("open PR monitoring limit exceeded")
     return [
         snapshot(api(f"pulls/{pr['number']}")) for pr in opened
-        if not (pr["head"]["ref"] == BRANCH and (pr["head"]["repo"] or {}).get("full_name") == REPO)
+        if not (pr["head"]["ref"] == branch and (pr["head"]["repo"] or {}).get("full_name") == REPO)
     ]
 
 
@@ -148,7 +149,14 @@ def review_run(run, pr, work, out, prior, source_sha):
         failed = [job for job in jobs if job["conclusion"] in UNSUCCESSFUL]
         for job in failed[:2]:
             log = failed_job_log(job) if pr["head_repo_id"] == pr["base_repo_id"] else None
-            diagnosis = issue(run, classify_failure(log), job)
+            kind = classify_failure(log)
+            if kind == "stale_arm64_jni" and (
+                run["path"] != ".github/workflows/nightprint-trial-check.yml"
+                or not any(step["name"] == "Refuse stale native binary when C++ sources change"
+                           and step["conclusion"] == "failure" for step in job.get("steps", []))
+            ):
+                kind = "unclassified_ci_failure"
+            diagnosis = issue(run, kind, job)
             diagnosis["log_available"] = log is not None
             result["issues"].append(diagnosis)
         if not result["issues"]:
@@ -284,7 +292,9 @@ def supervise(args):
              "release_authorized": False}
     save(output, state)
     try:
-        previous, checkpoint = read_previous(BRANCH, args.default_branch, args.run_id, args.attempt)
+        previous, checkpoint = read_previous(args.branch, args.default_branch, args.run_id, args.attempt)
+        if previous is None and args.branch == COMMAND_BRANCH:
+            previous, checkpoint = read_previous(BRANCH, args.default_branch, args.run_id, args.attempt)
         if previous:
             state.update(prs=previous["prs"].copy(), pending=previous["pending"].copy(),
                          resumed_from={"run_id": previous["run_id"], "artifact_id": checkpoint})
@@ -293,7 +303,7 @@ def supervise(args):
         args.work.mkdir(parents=True)
         source_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
         state["source_sha"] = source_sha
-        prs = list_prs()
+        prs = list_prs(args.branch)
         for pr in sorted(prs, key=lambda item: item["number"]):
             number = str(pr["number"])
             prior = state["prs"].get(number)
@@ -321,6 +331,7 @@ def supervise(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--branch", choices=(BRANCH, COMMAND_BRANCH), default=BRANCH)
     parser.add_argument("--run-id", type=int, required=True)
     parser.add_argument("--attempt", type=int, default=int(os.getenv("GITHUB_RUN_ATTEMPT", "1")))
     parser.add_argument("--default-branch", required=True)

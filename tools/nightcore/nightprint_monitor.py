@@ -16,10 +16,16 @@ def classify_failure(log):
         return "unclassified_ci_failure"
     if re.search(r"ADB (?:target .* is not booted|lost before|disconnected during)|AdbCommandRejectedException: device offline", log):
         return "adb_disconnect"
-    if re.search(r"Received status code 429|HTTP 429|Too Many Requests", log, re.I):
+    if re.search(r"##\[error\]C\+\+ native sources changed but the bundled arm64 libprusaslicer-jni\.so was not rebuilt\.", log):
+        return "stale_arm64_jni"
+    if re.search(r"Could not (?:GET|HEAD) ['\"]https://repo\.maven\.apache\.org/maven2/[^\s]+.*Received status code 429", log):
+        return "maven_central_rate_limit"
+    if re.search(r"Received status code 429|HTTP 429", log, re.I):
         return "dependency_rate_limit"
     if re.search(r"^FAIL: .*native-evidence\.json:", log, re.M):
         return "audit_evidence_rejected"
+    if re.search(r"AssertionError:.*\n(?:[^\n]*\n){0,6}[^\n]*\bat com\.u1\.slicer\.", log):
+        return "project_assertion_failure"
     if re.search(r"Tests on .* failed|AssertionError|tests? failed", log, re.I):
         return "test_failure"
     return "unclassified_ci_failure"
