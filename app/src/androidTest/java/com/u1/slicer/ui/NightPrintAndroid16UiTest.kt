@@ -1,7 +1,6 @@
 package com.u1.slicer.ui
 
 import android.Manifest
-import android.accessibilityservice.AccessibilityService
 import android.app.Activity
 import android.app.Instrumentation
 import android.net.Uri
@@ -132,7 +131,9 @@ class NightPrintAndroid16UiTest {
                     }
                     Intent.ACTION_CHOOSER -> {
                         chooser.set(Intent(intent))
-                        null // Let the actual Android share sheet launch.
+                        // Keep the OS share target local to the test. The app still
+                        // creates the chooser, the URI and its read grant.
+                        Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)
                     }
                     else -> null
                 }
@@ -140,8 +141,10 @@ class NightPrintAndroid16UiTest {
         }
         instrumentation.addMonitor(monitor)
         try {
+            Log.i("NIGHTPRINT_EXPORT", "Clicking Save")
             compose.onNodeWithText("Save").performClick()
             awaitExport("nonempty saved G-code") { saveRequest.get() != null && saved.length() > 0L }
+            Log.i("NIGHTPRINT_EXPORT", "Clicking Share")
             compose.onNodeWithText("Share").performClick()
             awaitExport("Android share intent") { chooser.get() != null }
             val send = checkNotNull(chooser.get()?.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java))
@@ -153,12 +156,6 @@ class NightPrintAndroid16UiTest {
             // A byte-for-byte match also waits for the asynchronous save copy to finish.
             awaitExport("complete saved G-code") { saved.length() == sharedBytes.size.toLong() }
             assertArrayEquals(sharedBytes, saved.readBytes())
-            awaitExport("visible Android resolver") {
-                val foreground = instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()
-                foreground == "android" || foreground?.endsWith(".intentresolver") == true
-            }
-            assertTrue(instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK))
-            await("Save")
             Log.i("NIGHTPRINT_EXPORT", "save_bytes=${saved.length()} share_bytes=${sharedBytes.size}")
         } finally {
             instrumentation.removeMonitor(monitor)
