@@ -5,10 +5,15 @@ on:
       - 'tools/nightcore/verify_native_evidence.py'
       - 'tools/nightcore/test_native_evidence.py'
       - 'tools/nightcore/recover_evidence.py'
+      - 'tools/nightcore/operational_loop.py'
+      - 'tools/nightcore/github_cycle.py'
+      - 'tools/nightcore/test_operational_loop.py'
       - 'tools/nightcore/test_recover_evidence.py'
       - '.github/scripts/run-nightprint-android-e2e.sh'
       - '.github/workflows/nightcore-evidence-gate.yml'
   workflow_dispatch:
+  schedule:
+    - cron: "17 */12 * * *"
 permissions:
   contents: read
   actions: read
@@ -57,4 +62,42 @@ jobs:
           name: nightcore-recovery-${{ github.run_id }}
           path: nightcore-recovery/
           if-no-files-found: ignore
+          retention-days: 14
+
+
+  operational-loop:
+    if: >-
+      github.repository == 'kurenn46-max/u1-slicer-for-android' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && github.ref_name == 'experiment/nightcore-operational-loop-v2') ||
+       (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository &&
+        github.head_ref == 'experiment/nightcore-operational-loop-v2'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: nightcore-phase2-operations
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'experiment/nightcore-operational-loop-v2' || github.sha }}
+          persist-credentials: false
+      - name: Discover and process one CI result
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/nightcore/github_cycle.py --branch experiment/nightcore-operational-loop-v2 \
+            --run-id "$GITHUB_RUN_ID" --work "$RUNNER_TEMP/nightcore-cycle" --output nightcore-phase2
+      - name: Exercise fault scenarios against real Android evidence
+        if: github.event_name != 'schedule'
+        run: |
+          NIGHTCORE_REAL_EVIDENCE="$RUNNER_TEMP/nightcore-cycle/input-evidence" \
+            python3 -m unittest discover -s tools/nightcore -p 'test_operational_loop.py' -v
+      - name: Archive phase 2 checkpoint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightcore-phase2-state
+          path: nightcore-phase2/
+          if-no-files-found: error
           retention-days: 14
