@@ -8,6 +8,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.core.content.FileProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -89,11 +90,13 @@ class NightPrintAndroid16UiTest {
             }
         }
 
-    private fun await(text: String, timeoutMs: Long = 45_000) {
+    private fun await(text: String, timeoutMs: Long = 45_000, scrollIntoView: Boolean = false) {
         compose.waitUntil(timeoutMs) {
             compose.onAllNodes(hasText(text, substring = true)).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText(text, substring = true).assertIsDisplayed()
+        val node = compose.onNodeWithText(text, substring = true)
+        if (scrollIntoView) node.performScrollTo()
+        node.assertIsDisplayed()
     }
 
     @Test fun stlOpensIntoPrepareScreen() {
@@ -114,7 +117,9 @@ class NightPrintAndroid16UiTest {
             compose.onNodeWithText("Slice Model").performClick()
             await("NIGHT PRINT - 開始温度の確認", 120_000)
             compose.onNodeWithText("温度を確認して承認").performClick()
-            await("Slice Summary", 120_000)
+            await("Save", 120_000)
+            await("Share")
+            await("Slice Summary", 120_000, scrollIntoView = true)
         }
     }
 
