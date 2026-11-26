@@ -30,7 +30,9 @@ class NightPrintQualityE2ETest {
     @Test fun steppedSocketAndPlugStlSliceWithPetg() = verifyFixture("stl")
     @Test fun steppedSocketAndPlug3mfSliceWithEmbeddedPetg() = verifyFixture("3mf")
 
-    private fun verifyFixture(format: String) {
+    @Test fun publishedPetgPrintSettingDoesNotAvoidStartupFlush() = verifyFixture("stl", 240)
+
+    private fun verifyFixture(format: String, nozzleC: Int = 235) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val dir = File(instrumentation.targetContext.cacheDir, "nightprint-quality-$format")
         dir.deleteRecursively()
@@ -47,7 +49,7 @@ class NightPrintQualityE2ETest {
                 NIGHTPRINT-SETTINGS/V1
                 printer=BAMBU_A1_MINI
                 material=PETG
-                nozzle_c=235
+                nozzle_c=NOZZLE
                 bed_c=70
                 print_mm_s=30
                 travel_mm_s=150
@@ -61,7 +63,7 @@ class NightPrintQualityE2ETest {
                 support=false
                 brim_mm=0
                 color_hex=#000000
-            """.trimIndent())
+            """.trimIndent().replace("NOZZLE", nozzleC.toString()))
             val overrides = NightPrintRecipeContract.explicitOverrides(recipe)
             val model = if (format == "3mf") {
                 val embedded = BambuImportedConfigComposer.compose(
@@ -102,7 +104,9 @@ class NightPrintQualityE2ETest {
             assertTrue("Missing real $format G-code", gcode.isFile && gcode.length() > 1000L)
 
             // No startup approval is supplied, and no held G-code is exported.
-            val safety = NightPrintGcodeAudit.inspect(gcode, "PETG", 235, 70)
+            val safety = NightPrintGcodeAudit.inspect(gcode, "PETG", nozzleC, 70)
+            val temperatures = traceTemperatures(gcode)
+            val negativeChecks = if (nozzleC == 235) checkSafetyRejections(gcode, dir) else emptyList()
             val settings = NightPrintRecipeContract.verify(gcode, recipe)
             val equivalent = File(dir, "preview.gcode")
             // Orca/Bambu use two spellings for otherwise identical preview labels.
@@ -150,11 +154,20 @@ class NightPrintQualityE2ETest {
                 xSpan <= 1f && ySpan >= 13f
             }
             val geometry = lower.size == 3 && lower.all { it } && thinLayers >= 9 && layers.size in 34..38
-            val qualified = safety.passed || safety.errors == listOf(
-                "PETG elevated startup heat is not qualified for printing"
-            )
+            // A passing instrumentation test only establishes that the hold behaves as expected.
+            val heldForKnownReason = !safety.passed && !NightPrintGcodeAudit.canRequestStartupHeatApproval(safety) &&
+                if (nozzleC == 235) safety.petgStartupUnqualified && safety.errors == listOf(
+                    "PETG elevated startup heat is not qualified for printing"
+                ) else safety.errors == listOf("Startup nozzle exceeds material cap 240 C: [250]")
             val verdict = JSONObject()
                 .put("format", format).put("engine", "real_android_native_jni")
+                .put("requested_nozzle_c", nozzleC)
+                .put("gcode_material", JSONArray(safety.recognizedMaterials.sorted()))
+                .put("gcode_printer", safety.printerModel)
+                .put("initial_nozzle_c", safety.initialNozzleC)
+                .put("bed_commands_c", JSONArray(safety.bedCommandsC.sorted()))
+                .put("temperature_commands", temperatures)
+                .put("negative_audit_cases", JSONArray(negativeChecks))
                 .put("gcode_bytes", gcode.length())
                 .put("gcode_sha256", MessageDigest.getInstance("SHA-256").digest(gcode.readBytes())
                     .joinToString("") { "%02x".format(it) })
@@ -166,16 +179,80 @@ class NightPrintQualityE2ETest {
                 .put("safety_errors", JSONArray(safety.errors))
                 .put("safety", when {
                     safety.passed -> "VERIFIED"
-                    qualified -> "HOLD"
+                    heldForKnownReason -> "HOLD"
                     else -> "FAIL"
                 })
-            Log.i("NIGHTPRINT_QUALITY", verdict.toString())
+            Log.i(if (nozzleC == 235) "NIGHTPRINT_QUALITY" else "NIGHTPRINT_PETG_SETTINGS", verdict.toString())
             assertTrue("Geometry check failed: $verdict", geometry)
             assertTrue("PETG recipe mismatch: " + settings.mismatches, settings.passed)
-            assertTrue("Unexpected PETG safety errors: " + safety.errors, qualified)
+            assertTrue("Expected PETG startup HOLD: " + safety.errors, heldForKnownReason)
+            assertEquals("Hard-coded flush target must persist at both requested settings", 250, safety.startupNozzlePeakC)
         } finally {
             native.clearModel()
             dir.deleteRecursively()
+        }
+    }
+    /** Record every heater instruction, never the executable document itself. */
+    private fun traceTemperatures(gcode: File): JSONArray {
+        val command = Regex("""^(M(?:104|109|140|190))(?=\s|$)""")
+        val target = Regex("""(?:^|\s)([SR])(\d+)(?=\s|$)""")
+        val result = JSONArray()
+        var phase = "startup"
+        var flushWait = false
+        var flushSet = false
+        var endNozzleOff = false
+        var endBedOff = false
+        gcode.forEachLine { line ->
+            val trimmed = line.trim()
+            if (trimmed == ";LAYER_CHANGE") phase = "layers"
+            // Exact marker emitted by the pinned A1 mini machine-end template.
+            if (trimmed == ";turn off nozzle clog detect" && phase == "layers") phase = "shutdown"
+            val instruction = trimmed.substringBefore(';').trim()
+            val kind = command.find(instruction)?.value
+            if (kind != null) {
+                val setpoint = checkNotNull(target.findAll(instruction).singleOrNull()) {
+                    "Missing or ambiguous heater target: $instruction"
+                }
+                val value = setpoint.groupValues[2].toInt()
+                result.put(JSONArray().put(phase).put(kind).put(setpoint.groupValues[1]).put(value))
+                if (phase == "startup" && value == 250) {
+                    if (kind == "M104") flushSet = true
+                    if (kind == "M109" && "common flush temp" in trimmed) flushWait = true
+                }
+                if (phase == "shutdown" && value == 0) {
+                    if (kind == "M104") endNozzleOff = true
+                    if (kind == "M140") endBedOff = true
+                }
+            }
+        }
+        assertTrue("Missing pinned startup flush commands in $result", flushSet && flushWait)
+        assertTrue("Missing nozzle or bed shutdown in $result", endNozzleOff && endBedOff)
+        return result
+    }
+
+    private fun checkSafetyRejections(gcode: File, dir: File): List<String> {
+        val original = gcode.readText()
+        val beforeLayers = original.substringBefore(";LAYER_CHANGE")
+        val fromLayers = ";LAYER_CHANGE" + original.substringAfter(";LAYER_CHANGE")
+        val noWait = Regex("""(?m)^\s*M109\s+(?:T\d+\s+)?[SR]235\b[^\r\n]*""")
+        val noTarget = Regex("""(?m)^\s*M(?:104|109)\s+(?:T\d+\s+)?[SR]235\b[^\r\n]*""")
+        val caseFile = File(dir, "negative.gcode")
+        val cases = listOf(
+            Triple("overheat_after_layer", original.replaceFirst(";LAYER_CHANGE", ";LAYER_CHANGE\nM104 T0 S270"),
+                "High nozzle temperature AFTER layer"),
+            Triple("no_startup_return_wait", beforeLayers.replace(noWait, "") + fromLayers, "did not return to 235 C"),
+            Triple("wrong_machine", original.replace(
+                Regex("""(?m)^(;\s*printer_model\s*=).*"""), "$1 Bambu Lab A1"
+            ), "Machine mismatch"),
+            Triple("missing_nozzle_command", original.replace(noTarget, ""), "No nozzle-temperature command found")
+        )
+        return cases.map { (name, content, expectedError) ->
+            assertNotEquals("Negative case did not modify input: $name", original, content)
+            caseFile.writeText(content)
+            val audit = NightPrintGcodeAudit.inspect(caseFile, "PETG", 235, 70, startupHeatApproved = true)
+            assertTrue("$name did not exercise its expected check: " + audit.errors,
+                !audit.passed && audit.errors.any { expectedError in it })
+            name
         }
     }
 }

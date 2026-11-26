@@ -30,11 +30,18 @@ def ui_evidence(directory):
 
 def quality_evidence(directory):
     quality = {}
+    trial = None
     for line in log_lines(directory, "native-android-logcat.txt"):
-        match = re.fullmatch(r"I/NIGHTPRINT_QUALITY\s*\(\s*\d+\): (\{.*\})", line.strip())
+        match = re.fullmatch(r"I/(NIGHTPRINT_QUALITY|NIGHTPRINT_PETG_SETTINGS)\s*\(\s*\d+\): (\{.*\})", line.strip())
         if not match:
             continue
-        item = json.loads(match[1])
+        item = json.loads(match[2])
+        if match[1] == "NIGHTPRINT_PETG_SETTINGS":
+            if (trial is not None or item["requested_nozzle_c"] != 240
+                    or item["startup_peak_c"] != 250 or item["safety"] != "HOLD"):
+                raise ValueError("Invalid or duplicated 240 C comparison")
+            trial = item
+            continue
         kind = item["format"]
         if kind in quality or kind not in ("stl", "3mf"):
             raise ValueError(f"Unexpected or duplicate native quality evidence: {kind}")
@@ -47,7 +54,9 @@ def quality_evidence(directory):
         raise ValueError("Missing STL or 3MF native quality evidence")
     for kind, item in quality.items():
         (directory / f"petg-{kind}-quality.json").write_text(json.dumps(item, indent=2) + "\n")
-    return quality
+    if trial is None:
+        raise ValueError("Missing 240 C PETG native comparison")
+    return quality, trial
 
 
 def main():
@@ -59,13 +68,13 @@ def main():
     args = cli.parse_args()
     directory = args.directory
     directory.mkdir(exist_ok=True)
-    status, quality, errors = "UNVERIFIED", {}, {}
+    status, quality, trial, errors = "UNVERIFIED", {}, None, {}
     for name, read in (("ui", ui_evidence), ("native", quality_evidence)):
         try:
             if name == "ui":
                 status = read(directory)
             else:
-                quality = read(directory)
+                quality, trial = read(directory)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             errors[name] = str(exc)
     if args.verify:
@@ -93,8 +102,8 @@ def main():
         "project": os.getenv("GITHUB_REPOSITORY"), "commit_sha": os.getenv("NIGHTPRINT_PR_HEAD"),
         "checkout_sha": os.getenv("GITHUB_SHA"), "ci_url": run_url,
         "instrumentation": result,
-        "junit": {"native_tpu": 2, "native_petg": 2, "ui": 8} if passed else {},
-        "petg_ui": status, "geometry": quality, "evidence_errors": errors,
+        "junit": {"native_tpu": 2, "native_petg": 3, "ui": 8} if passed else {},
+        "petg_ui": status, "geometry": quality, "petg_240c_comparison": trial, "evidence_errors": errors,
         "release_authorized": False, "unverified": unknown, "next_codex_task": next_task,
     }
     (directory / "product-verification.json").write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
@@ -103,6 +112,8 @@ def main():
     print(f"- Android計測 {record['instrumentation']}／PETG出力 {status}")
     for name, item in quality.items():
         print(f"- {name.upper()} {item['gcode_bytes']} B、{item['layers']}層、出力監査 {item['safety']}")
+    if trial:
+        print("- STL比較 印刷設定240℃でも開始指令250℃。PETG出力HOLD。")
     print("- 未検証 " + "、".join(unknown))
     print("- 次の指令 " + next_task)
     return 0

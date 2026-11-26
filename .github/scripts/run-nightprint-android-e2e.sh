@@ -59,7 +59,7 @@ device shell getprop ro.dalvik.vm.native.bridge >> "$out/device-abi.txt"
 device logcat -c
 # Stream before the tests so evidence already emitted survives a disconnect.
 timeout -k 2s 20m adb -s "$serial" logcat -v brief -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I \
-  NIGHTPRINT_EXPORT:I NIGHTPRINT_PETG_E2E:I NIGHTPRINT_QUALITY:I AndroidRuntime:E ActivityManager:E '*:S' > "$out/live-logcat.txt" 2>&1 &
+  NIGHTPRINT_EXPORT:I NIGHTPRINT_PETG_E2E:I NIGHTPRINT_QUALITY:I NIGHTPRINT_PETG_SETTINGS:I AndroidRuntime:E ActivityManager:E '*:S' > "$out/live-logcat.txt" 2>&1 &
 log_pid=$!
 
 run_suite() {
@@ -117,9 +117,9 @@ PY
 }
 
 native_result=0
-run_suite native com.u1.slicer.slicing.NightPrintNativeE2ETest,com.u1.slicer.slicing.NightPrintQualityE2ETest 2,2 || native_result=$?
+run_suite native com.u1.slicer.slicing.NightPrintNativeE2ETest,com.u1.slicer.slicing.NightPrintQualityE2ETest 2,3 || native_result=$?
 if connection_state; then
-  device logcat -d -v brief -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I NIGHTPRINT_QUALITY:I AndroidRuntime:E '*:S' \
+  device logcat -d -v brief -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I NIGHTPRINT_QUALITY:I NIGHTPRINT_PETG_SETTINGS:I AndroidRuntime:E '*:S' \
     > "$out/native-android-logcat.txt" || cp "$out/live-logcat.txt" "$out/native-android-logcat.txt"
   device pull "$reports/nightprint-native-e2e-report.json" "$out/raw-stl-native-evidence.json" || true
   device pull "$reports/nightprint-3mf-profile-e2e-report.json" "$out/embedded-3mf-native-evidence.json" || true

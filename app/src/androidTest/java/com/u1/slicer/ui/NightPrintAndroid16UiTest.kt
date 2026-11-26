@@ -216,15 +216,16 @@ class NightPrintAndroid16UiTest {
             await("Slice Model")
             compose.onNodeWithText("Slice Model").performClick()
             compose.waitUntil(120_000L) {
-                compose.onAllNodes(hasText("NIGHT PRINT safety check blocked this G-code.", substring = true))
+                compose.onAllNodes(hasText("PETGの印刷を保留しました。", substring = true))
                     .fetchSemanticsNodes().isNotEmpty() ||
                 compose.onAllNodes(hasText("Save")).fetchSemanticsNodes().isNotEmpty()
             }
             val safetyHold = compose.onAllNodes(
-                hasText("NIGHT PRINT safety check blocked this G-code.", substring = true)
+                hasText("PETGの印刷を保留しました。", substring = true)
             ).fetchSemanticsNodes().isNotEmpty()
             if (safetyHold) {
-                await("PETG elevated startup heat is not qualified for printing")
+                await("印刷設定の235℃より高い250℃")
+                await("印刷用ファイルは保存・共有できません")
                 assertTrue(
                     "Blocked PETG G-code must not be exportable",
                     compose.onAllNodes(hasText("Save")).fetchSemanticsNodes().isEmpty() &&

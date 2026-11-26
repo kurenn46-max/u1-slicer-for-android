@@ -21,7 +21,8 @@ object NightPrintGcodeAudit {
         val warnings: List<String>,
         val requiresStartupHeatApproval: Boolean = false,
         val startupNozzlePeakC: Int? = null,
-        val layerNozzlePeakC: Int? = null
+        val layerNozzlePeakC: Int? = null,
+        val petgStartupUnqualified: Boolean = false
     )
 
     /** Never offer an override when there is any fault besides the single consent gate. */
@@ -150,7 +151,8 @@ object NightPrintGcodeAudit {
         // Setpoint return alone is not proof of cooldown. Until the specific
         // PETG spool limit and A1 mini firmware sequence are verified, keep
         // elevated PETG startup diagnostic-only, even with user consent.
-        if (petgPurgeRecipe && highStartup.isNotEmpty()) {
+        val petgStartupUnqualified = petgPurgeRecipe && highStartup.isNotEmpty()
+        if (petgStartupUnqualified) {
             errors.add("PETG elevated startup heat is not qualified for printing")
         }
         val needsApproval = !petgPurgeRecipe && highStartup.isNotEmpty() && beyondCeiling.isEmpty()
@@ -168,7 +170,7 @@ object NightPrintGcodeAudit {
         return Report(
             errors.isEmpty(), expectedMaterial, materials, machineTags.singleOrNull(),
             initialNozzleTags.singleOrNull(), beds, errors, warnings, needsApproval,
-            startupNozzles.maxOrNull(), layerNozzles.maxOrNull()
+            startupNozzles.maxOrNull(), layerNozzles.maxOrNull(), petgStartupUnqualified
         )
     }
 }
