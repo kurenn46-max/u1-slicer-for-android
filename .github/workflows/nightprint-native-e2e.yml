@@ -26,14 +26,13 @@ jobs:
         with:
           name: nightprint-native-engine-candidate
           path: native-candidate
-      - name: Restore pinned JNI candidate for an unchanged app and build recipe
+      - name: Restore pinned JNI candidate for unchanged native source and build recipe
         if: inputs.reuse-verified-candidate
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD:app)" = 69d4e1c6a03bb39bdc3b12e27cc05a102b4585ba
-          test "$(git rev-parse HEAD:scripts)" = e9a7f1c85d350dd12a8ce48c6e5e5e348a2c7a94
+          bash .github/scripts/check-nightprint-native-inputs.sh
           endpoint=repos/kurenn46-max/u1-slicer-for-android/actions/artifacts/15103919717
           digest=a0f846b523ef1e92fdf1311c89e1273384ee2f84733f4c0dedbc204ec622c061
           gh api "$endpoint" | jq -e --arg digest "sha256:$digest" '
@@ -90,10 +89,10 @@ jobs:
           echo "$actual" > nightprint-e2e-ci/packaged-engine.sha256
           test "$actual" = "$expected"
           sha256sum "$apk" > nightprint-e2e-ci/test-apk.sha256
-      - name: Real native Android instrumentation (API 35, ARM translation)
+      - name: Real native Android instrumentation (API 36, ARM translation)
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 36
           arch: x86_64
           target: google_apis
           profile: pixel_5
@@ -110,15 +109,15 @@ jobs:
           tools="$ANDROID_HOME/build-tools/34.0.0"
           "$tools/apksigner" verify --print-certs "$apk" | tee nightprint-e2e-ci/apk-signature.txt
           "$tools/aapt" dump badging "$apk" > nightprint-e2e-ci/apk-badging.txt
-          grep -Fq "package: name='com.u1.slicer.orca.genesis.qa3'" nightprint-e2e-ci/apk-badging.txt
+          grep -Fq "package: name='com.u1.slicer.orca.genesis.qa4'" nightprint-e2e-ci/apk-badging.txt
           git rev-parse HEAD > nightprint-e2e-ci/tested-source.txt
           mkdir verified-apk
-          cp "$apk" verified-apk/night-print-genesis-qa3-arm64.apk
-          (cd verified-apk && sha256sum night-print-genesis-qa3-arm64.apk | tee SHA256SUMS)
+          cp "$apk" verified-apk/night-print-genesis-qa4-arm64.apk
+          (cd verified-apk && sha256sum night-print-genesis-qa4-arm64.apk | tee SHA256SUMS)
       - name: Upload the verified installable QA APK
         uses: actions/upload-artifact@v4
         with:
-          name: nightprint-verified-qa3-apk-${{ github.run_id }}
+          name: nightprint-verified-qa4-apk-${{ github.run_id }}
           if-no-files-found: error
           retention-days: 14
           path: verified-apk/
