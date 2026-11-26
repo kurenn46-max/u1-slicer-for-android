@@ -5,6 +5,7 @@ on:
       - '.github/workflows/nightprint-arm64-stage3.yml'
       - '.github/workflows/nightprint-native-e2e.yml'
       - 'scripts/restore-nightprint-occt.sh'
+      - 'scripts/build-nightprint-native-support.sh'
       - 'scripts/build_deps.sh'
       - 'app/src/main/cpp/**'
       - 'app/src/main/java/com/u1/slicer/data/NightPrint**'
@@ -90,6 +91,11 @@ jobs:
           cp -a dep-input/stage3/nightprint-arm64-stage3-occt/app/src/main/cpp/extern/occt app/src/main/cpp/extern/
           find dep-input -type f \( -name '*.commit' -o -name '*source.txt' -o -name '*sha256*' -o -name 'compiler.txt' \) -print > native-candidate/provenance-files.txt
           tar -czf native-candidate/dependency-provenance.tar.gz -T native-candidate/provenance-files.txt
+      - name: Build pinned Android PNG, JPEG and NLopt support
+        run: |
+          set -euo pipefail
+          timeout 300s bash scripts/build-nightprint-native-support.sh \
+            native-support app/src/main/cpp/extern 2>&1 | tee native-candidate/native-support.log
       - name: Configure and build actual native engine
         run: |
           set -euo pipefail
@@ -101,6 +107,7 @@ jobs:
             -DANDROID_PLATFORM=android-26 -DANDROID_ABI=arm64-v8a \
             -DANDROID_NDK="$NDK" -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
             -DCMAKE_BUILD_TYPE=Release -DSLICER_BACKEND=orca -DANDROID_STL=c++_shared \
+            -DNIGHTPRINT_NATIVE_SUPPORT_DIR="$PWD/native-support" \
             2>&1 | tee native-candidate/configure.log
           timeout 1800s ninja -C native-build -j1 prusaslicer-jni 2>&1 | tee native-candidate/build.log
       - name: Validate native candidate
