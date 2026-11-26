@@ -4,6 +4,7 @@ on:
     paths:
       - '.github/workflows/nightprint-arm64-stage3.yml'
       - '.github/workflows/nightprint-native-e2e.yml'
+      - '.github/scripts/run-nightprint-android-e2e.sh'
       - 'scripts/restore-nightprint-occt.sh'
       - 'scripts/build-nightprint-native-support.sh'
       - 'scripts/build_deps.sh'
@@ -18,7 +19,34 @@ concurrency:
   group: nightprint-arm64-stage3
   cancel-in-progress: true
 jobs:
+  select-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      reuse: ${{ steps.select.outputs.reuse }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          reuse=false
+          if [ "$(git rev-parse HEAD:app)" = 69d4e1c6a03bb39bdc3b12e27cc05a102b4585ba ] &&
+             [ "$(git rev-parse HEAD:scripts)" = e9a7f1c85d350dd12a8ce48c6e5e348a2c7a94 ] &&
+             gh api repos/kurenn46-max/u1-slicer-for-android/actions/artifacts/15103919717 --jq '.expired' | grep -Fxq false; then
+            reuse=true
+          fi
+          echo "reuse=$reuse" >> "$GITHUB_OUTPUT"
+
   native-candidate:
+    needs: select-candidate
+    if: needs.select-candidate.outputs.reuse != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -154,7 +182,10 @@ jobs:
           retention-days: 7
 
   native-e2e:
-    needs: native-candidate
+    needs: [select-candidate, native-candidate]
+    if: ${{ !cancelled() && (needs.select-candidate.outputs.reuse == 'true' || needs.native-candidate.result == 'success') }}
+    with:
+      reuse-verified-candidate: ${{ needs.select-candidate.outputs.reuse == 'true' }}
     permissions:
       contents: read
       actions: read
