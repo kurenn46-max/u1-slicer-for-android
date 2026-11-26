@@ -9,16 +9,22 @@ on:
       - 'tools/nightcore/github_cycle.py'
       - 'tools/nightcore/test_operational_loop.py'
       - 'tools/nightcore/test_recover_evidence.py'
+      - 'tools/nightcore/supervision.py'
+      - 'tools/nightcore/github_supervisor.py'
+      - 'tools/nightcore/nightprint_monitor.py'
+      - 'tools/nightcore/test_supervision.py'
       - '.github/scripts/run-nightprint-android-e2e.sh'
       - '.github/workflows/nightcore-evidence-gate.yml'
   workflow_dispatch:
   schedule:
-    - cron: "17 */12 * * *"
+    - cron: "17 17 * * *"
 permissions:
   contents: read
   actions: read
+  pull-requests: read
 jobs:
   evidence-gate:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -68,8 +74,7 @@ jobs:
   operational-loop:
     if: >-
       github.repository == 'kurenn46-max/u1-slicer-for-android' &&
-      (github.event_name == 'schedule' ||
-       (github.event_name == 'workflow_dispatch' && github.ref_name == 'experiment/nightcore-operational-loop-v2') ||
+      ((github.event_name == 'workflow_dispatch' && github.ref_name == 'experiment/nightcore-operational-loop-v2') ||
        (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository &&
         github.head_ref == 'experiment/nightcore-operational-loop-v2'))
     runs-on: ubuntu-24.04
@@ -80,7 +85,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'schedule' && 'experiment/nightcore-operational-loop-v2' || github.sha }}
           persist-credentials: false
       - name: Discover and process one CI result
         env:
@@ -99,5 +103,53 @@ jobs:
         with:
           name: nightcore-phase2-state
           path: nightcore-phase2/
+          if-no-files-found: error
+          retention-days: 14
+
+
+  supervisor:
+    if: >-
+      github.repository == 'kurenn46-max/u1-slicer-for-android' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref_name == 'experiment/nightcore-supervisor-v3') ||
+       (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository &&
+        github.head_ref == 'experiment/nightcore-supervisor-v3') ||
+       (github.event_name == 'schedule' && github.ref_name == github.event.repository.default_branch &&
+        vars.NIGHTCORE_PHASE3_SCHEDULE_ENABLED == 'true'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    concurrency:
+      group: nightcore-phase3-supervision
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Observe open PRs and checkpoint evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          timeout --kill-after=10s 4m python3 tools/nightcore/github_supervisor.py \
+            --run-id "$GITHUB_RUN_ID" --default-branch "$DEFAULT_BRANCH" \
+            --work "$RUNNER_TEMP/nightcore-supervision" --output nightcore-phase3
+      - name: Exercise Phase 3 on real Android evidence
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: timeout --kill-after=5s 90s python3 tools/nightcore/test_supervision.py --real-evidence
+      - name: Publish the supervision summary
+        if: always()
+        run: |
+          if [ -s nightcore-phase3/summary.md ]; then
+            cat nightcore-phase3/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "NIGHT CORE did not reach its first checkpoint." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Save the checkpoint and local recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightcore-phase3-state-${{ github.run_attempt }}
+          path: nightcore-phase3/
           if-no-files-found: error
           retention-days: 14
