@@ -15,7 +15,7 @@ jobs:
   native-android:
     name: Execute real native A1 mini TPU .npjob slice on emulator
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -92,6 +92,7 @@ jobs:
       - name: Real native Android instrumentation (API 36, ARM translation)
         uses: reactivecircus/android-emulator-runner@v2
         with:
+          emulator-boot-timeout: 180
           api-level: 36
           arch: x86_64
           target: google_apis
@@ -100,7 +101,7 @@ jobs:
           heap-size: 1024M
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
-          script: bash .github/scripts/run-nightprint-android-e2e.sh
+          script: timeout -k 20s 19m bash .github/scripts/run-nightprint-android-e2e.sh
       - name: Verify and stage the exact APK used by instrumentation
         run: |
           set -euo pipefail

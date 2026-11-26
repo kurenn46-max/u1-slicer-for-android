@@ -1,6 +1,11 @@
 package com.u1.slicer.ui
 
 import android.Manifest
+import android.app.Activity
+import android.app.Instrumentation
+import android.net.Uri
+import android.os.SystemClock
+import android.util.Log
 import android.content.Intent
 import android.os.Build
 import androidx.compose.ui.test.assertIsDisplayed
@@ -20,9 +25,12 @@ import com.u1.slicer.data.PrinterKind
 import com.u1.slicer.data.PrintersConfig
 import com.u1.slicer.data.PrintersRepository
 import java.io.File
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -99,6 +107,57 @@ class NightPrintAndroid16UiTest {
         node.assertIsDisplayed()
     }
 
+    private fun awaitExport(description: String, predicate: () -> Boolean) {
+        val deadline = SystemClock.elapsedRealtime() + 30_000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (predicate()) return
+            SystemClock.sleep(100)
+        }
+        error("Timed out waiting for $description")
+    }
+
+    private fun verifySaveAndShare() {
+        val saved = File(app.cacheDir, "qa4-save-${SystemClock.elapsedRealtime()}.gcode")
+        val destination = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", saved)
+        val saveRequest = AtomicReference<Intent?>()
+        val chooser = AtomicReference<Intent?>()
+        val monitor = object : Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
+                return when (intent.action) {
+                    Intent.ACTION_CREATE_DOCUMENT -> {
+                        saveRequest.set(Intent(intent))
+                        // Provide a local, writable document result at the Android picker boundary.
+                        Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(destination))
+                    }
+                    Intent.ACTION_CHOOSER -> {
+                        chooser.set(Intent(intent))
+                        null // Let the actual Android share sheet launch.
+                    }
+                    else -> null
+                }
+            }
+        }
+        instrumentation.addMonitor(monitor)
+        try {
+            compose.onNodeWithText("Save").performClick()
+            awaitExport("nonempty saved G-code") { saveRequest.get() != null && saved.length() > 0L }
+            compose.onNodeWithText("Share").performClick()
+            awaitExport("Android share intent") { chooser.get() != null }
+            val send = checkNotNull(chooser.get()?.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java))
+            check(send.action == Intent.ACTION_SEND)
+            assertTrue(send.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+            val sharedUri = checkNotNull(send.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java))
+            val sharedBytes = checkNotNull(app.contentResolver.openInputStream(sharedUri)).use { it.readBytes() }
+            assertTrue("Shared G-code must not be empty", sharedBytes.isNotEmpty())
+            // A byte-for-byte match also waits for the asynchronous save copy to finish.
+            awaitExport("complete saved G-code") { saved.length() == sharedBytes.size.toLong() }
+            assertArrayEquals(sharedBytes, saved.readBytes())
+            Log.i("NIGHTPRINT_EXPORT", "save_bytes=${saved.length()} share_bytes=${sharedBytes.size}")
+        } finally {
+            instrumentation.removeMonitor(monitor)
+        }
+    }
+
     @Test fun stlOpensIntoPrepareScreen() {
         launch(asset("tetrahedron.stl")) { await("Slice Model") }
     }
@@ -120,6 +179,7 @@ class NightPrintAndroid16UiTest {
             await("Save", 120_000)
             await("Share")
             await("Slice Summary", 120_000, scrollIntoView = true)
+            verifySaveAndShare()
         }
     }
 
