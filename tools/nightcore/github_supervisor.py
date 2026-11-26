@@ -20,7 +20,7 @@ WORKFLOW = "actions/workflows/nightcore-evidence-gate.yml/runs"
 BRANCH = "experiment/nightcore-supervisor-v3"
 CHECKPOINT = "phase3.json"
 BUDGET = 25
-DIAGNOSTICS_VERSION = 2
+DIAGNOSTICS_VERSION = 3
 API_ERRORS = (OSError, ValueError, subprocess.SubprocessError, BadZipFile, ParseError)
 UNSUCCESSFUL = {"failure", "timed_out", "cancelled", "action_required", "startup_failure"}
 RUN_FIELDS = ("id", "workflow_id", "attempt", "path", "url", "name", "status", "conclusion")
@@ -118,6 +118,10 @@ def issue(run, kind, job=None):
     if job:
         entry["job_id"] = job["id"]
     return entry
+
+
+def issue_origin(item):
+    return tuple(item.get(field) for field in ("workflow_id", "run_id", "attempt", "job_id"))
 
 
 def published_artifacts(run, artifacts):
@@ -230,15 +234,18 @@ def review(pr, prior, state, work, output, source_sha):
             repairs.append({"action": "restore_missing_audit_json_and_revalidate", "attempts": audit["attempts"],
                             "evidence": f"audit-pr-{number}/recovery/checkpoint.json"})
         passing = {run["workflow_id"] for run in matched if run["conclusion"] == "success"}
+        retained_origins = {issue_origin(item) for item in issues}
         unresolved_workflows = {item.get("workflow_id") for item in issues}
         for old in prior["issues"] if prior else []:
+            origin = issue_origin(old)
+            if origin in retained_origins:
+                continue
             workflow = old.get("workflow_id")
             if workflow in passing - unresolved_workflows:
                 resolved.append(old)
-            elif workflow and not any(
-                item.get("workflow_id") == workflow and item["kind"] == old["kind"] for item in issues
-            ):
+            elif workflow:
                 issues.append({**old, "historical": True})
+                retained_origins.add(origin)
     if any(not parent["base_matches"] for parent in pr["dependencies"]):
         issues.append({"kind": "dependency_changed", "url": pr["url"]})
     if not complete:

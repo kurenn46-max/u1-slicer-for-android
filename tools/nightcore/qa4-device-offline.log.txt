@@ -1,6 +1,0 @@
-GitHub Actions job 140158278755, run 45892458208
-https://github.com/kurenn46-max/u1-slicer-for-android/actions/runs/45892458208/job/140158278755
-2026-11-26T20:50:13.6586555Z Tests on emulator-5554 - 16 failed: There was 1 failure(s).
-2026-11-26T20:50:14.1589602Z Exception thrown during onAfterAll invocation of plugin com.android.tools.utp.plugins.host.apkinstaller.AndroidTestApkInstallerPlugin.
-2026-11-26T20:50:14.1613094Z device offline
-2026-11-26T20:50:14.1613611Z com.android.ddmlib.AdbCommandRejectedException: device offline

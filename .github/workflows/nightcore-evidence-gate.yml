@@ -13,7 +13,6 @@ on:
       - 'tools/nightcore/github_supervisor.py'
       - 'tools/nightcore/nightprint_monitor.py'
       - 'tools/nightcore/test_supervision.py'
-      - 'tools/nightcore/qa4-device-offline.log.txt'
       - '.github/scripts/run-nightprint-android-e2e.sh'
       - '.github/workflows/nightcore-evidence-gate.yml'
   workflow_dispatch:

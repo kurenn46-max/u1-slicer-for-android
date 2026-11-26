@@ -91,6 +91,24 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(result["issues"][0]["kind"], "interrupted_review")
             process.assert_not_called()
 
+    def test_reclassifying_a_job_keeps_one_issue_for_that_execution(self):
+        pr = {"number": 6, "head_sha": "a", "base_sha": "b", "dependencies": [], "files_complete": True}
+        origin = {"workflow_id": 2, "run_id": 100, "attempt": 1, "job_id": 18}
+        previous_issue = {**origin, "kind": "unclassified_ci_failure"}
+        current_issue = {**origin, "kind": "adb_disconnect"}
+        with tempfile.TemporaryDirectory() as directory, patch("github_supervisor.api") as gh, \
+                patch("github_supervisor.review_run") as process:
+            gh.return_value = {"total_count": 1, "workflow_runs": [run_record(conclusion="failure")]}
+            process.return_value = {"jobs": [], "issues": [current_issue], "artifacts": [],
+                                    "tests": None, "audit": None}
+            work = Path(directory)
+            state = {"pending": {}, "repository": "test/example", "status": "INTERRUPTED", "prs": {}}
+            prior = {"observation": pr, "runs": [], "issues": [previous_issue], "audit": None,
+                     "stale_runs": 0, "ci_window_complete": True, "artifacts": []}
+            result = review(pr, prior, state, work / "current", work, "abc")
+            self.assertEqual(result["issues"], [current_issue])
+            self.assertEqual(result["resolved"], [])
+
     def test_classifies_adb_disconnect_and_dependency_limits(self):
         self.assertEqual(classify_failure("adb: device offline\nBoot complete"), "unclassified_ci_failure")
         self.assertEqual(classify_failure("com.android.ddmlib.AdbCommandRejectedException: device offline"),
@@ -130,21 +148,10 @@ def real_evidence_suite():
         if validate(evidence) or android_counts(bundle) != {"passed": 9, "failed": 0, "skipped": 0}:
             raise ValueError("QA4 must contain verified audit JSON and nine passing Android tests")
         adb_log = failed_job_log({"id": 140158278755})
-        source = "GitHub job logs API"
-        if adb_log is None:
-            adb_log = Path(__file__).with_name("qa4-device-offline.log.txt").read_text()
-            source = "checked-in excerpt of the GitHub job log"
-        diagnosis = classify_failure(adb_log)
-        # A successful but empty/partial download must not hide the missing live evidence.
-        if diagnosis != "adb_disconnect" and source == "GitHub job logs API":
-            print(f"Historical job log API returned {len(adb_log)} characters; ADB signature unavailable.",
-                  flush=True)
-            diagnosis = classify_failure(Path(__file__).with_name("qa4-device-offline.log.txt").read_text())
-            source = "checked-in excerpt of the GitHub job log"
-        if diagnosis != "adb_disconnect":
-            raise ValueError("historical Android CI log did not reproduce the ADB disconnect classification")
-        print(f"QA4 archive {artifact_id}: 9 Android tests passed; job 140158278755 classified as ADB disconnect "
-              f"using {source}.", flush=True)
+        if classify_failure(adb_log) != "adb_disconnect":
+            raise ValueError("historical Android CI job logs did not reproduce the ADB disconnect classification")
+        print(f"QA4 archive {artifact_id}: 9 Android tests passed. GitHub Actions job 140158278755 "
+              "classified as ADB disconnect from its original logs.", flush=True)
         with patch.dict(os.environ, {"NIGHTCORE_REAL_EVIDENCE": directory}):
             suite = unittest.defaultTestLoader.loadTestsFromTestCase(test_operational_loop.OperationalLoopTests)
             result = unittest.TextTestRunner(verbosity=2).run(suite)
