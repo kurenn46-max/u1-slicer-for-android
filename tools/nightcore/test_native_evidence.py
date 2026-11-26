@@ -4,7 +4,7 @@ import pathlib
 import tempfile
 import unittest
 
-from verify_native_evidence import validate
+from verify_native_evidence import validate, recover_from_logcat
 
 
 class NativeEvidenceTests(unittest.TestCase):
@@ -49,6 +49,25 @@ class NativeEvidenceTests(unittest.TestCase):
 
     def test_invalid_json_fails(self):
         (self.path / "raw-stl-native-evidence.json").write_text("{broken")
+        self.assertTrue(validate(self.path))
+
+    def test_recover_complete_logcat_json(self):
+        (self.path / "raw-stl-native-evidence.json").unlink()
+        (self.path / "embedded-3mf-native-evidence.json").unlink()
+        log = (
+            '11-26 I NIGHTPRINT_E2E: {"test":"PASS","final_audit_pass":true,"gcode_bytes":200}\\n'
+            '11-26 I NIGHTPRINT_3MF_E2E: {"result":"PASS","audit_passed":true,"gcode_bytes":400}\\n'
+        )
+        (self.path / "native-android-logcat.txt").write_text(log)
+        recover_from_logcat(self.path)
+        self.assertEqual(validate(self.path), [])
+
+    def test_incomplete_logcat_does_not_fake_success(self):
+        (self.path / "raw-stl-native-evidence.json").unlink()
+        (self.path / "native-android-logcat.txt").write_text(
+            'I NIGHTPRINT_E2E: {"test":"PASS","final_audit_pass":true'
+        )
+        recover_from_logcat(self.path)
         self.assertTrue(validate(self.path))
 
     def test_symlink_fails(self):
