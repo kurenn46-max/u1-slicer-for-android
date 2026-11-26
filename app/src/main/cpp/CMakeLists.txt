@@ -1045,6 +1045,16 @@ target_include_directories(libslic3r PUBLIC
     ${BUNDLED_INCLUDES}
 )
 
+set(NIGHTPRINT_NATIVE_SUPPORT_DIR "" CACHE PATH "Verified Android PNG, JPEG and NLopt install prefix")
+if(SLICER_BACKEND STREQUAL "orca" AND NIGHTPRINT_NATIVE_SUPPORT_DIR)
+    target_include_directories(libslic3r BEFORE PRIVATE "${NIGHTPRINT_NATIVE_SUPPORT_DIR}/include")
+    target_link_libraries(libslic3r PRIVATE
+        "${NIGHTPRINT_NATIVE_SUPPORT_DIR}/lib/libpng16.a"
+        "${NIGHTPRINT_NATIVE_SUPPORT_DIR}/lib/libjpeg.a"
+        "${NIGHTPRINT_NATIVE_SUPPORT_DIR}/lib/libnlopt.a"
+    )
+endif()
+
 if(SLICER_BACKEND STREQUAL "orca")
     target_link_libraries(libslic3r PRIVATE
         admesh

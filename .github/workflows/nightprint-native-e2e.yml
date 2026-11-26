@@ -1,20 +1,15 @@
 name: NIGHT PRINT native A1 mini E2E (real G-code)
 
 on:
-  pull_request:
-    paths:
-      - 'app/src/androidTest/java/com/u1/slicer/slicing/NightPrintNativeE2ETest.kt'
-      - 'app/src/main/java/com/u1/slicer/data/NightPrint**'
-      - 'app/src/main/java/com/u1/slicer/bambu/**'
-      - '.github/workflows/nightprint-native-e2e.yml'
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      reuse-verified-candidate:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
-
-concurrency:
-  group: nightprint-native-e2e-${{ github.ref }}
-  cancel-in-progress: true
+  actions: read
 
 jobs:
   native-android:
@@ -25,6 +20,47 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        if: ${{ !inputs.reuse-verified-candidate }}
+        with:
+          name: nightprint-native-engine-candidate
+          path: native-candidate
+      - name: Restore pinned JNI candidate for an unchanged app and build recipe
+        if: inputs.reuse-verified-candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:app)" = 69d4e1c6a03bb39bdc3b12e27cc05a102b4585ba
+          test "$(git rev-parse HEAD:scripts)" = e9a7f1c85d350dd12a8ce48c6e5e5e348a2c7a94
+          endpoint=repos/kurenn46-max/u1-slicer-for-android/actions/artifacts/15103919717
+          digest=a0f846b523ef1e92fdf1311c89e1273384ee2f84733f4c0dedbc204ec622c061
+          gh api "$endpoint" | jq -e --arg digest "sha256:$digest" '
+            .id == 15103919717 and .name == "nightprint-native-engine-candidate"
+            and .expired == false and .digest == $digest
+            and .workflow_run.id == 45790909501 and .workflow_run.repository_id == 1390875009
+            and .workflow_run.head_sha == "f2af90c8bc527152a008b6ca9839d831ef96449c"
+          ' > /dev/null
+          if ! gh api "$endpoint/zip" > "$RUNNER_TEMP/native-candidate.zip" 2>/dev/null; then
+            echo "Cannot download pinned JNI candidate 15103919717." >&2
+            exit 1
+          fi
+          echo "$digest  $RUNNER_TEMP/native-candidate.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/native-candidate.zip" -d native-candidate
+      - name: Verify and install the accepted JNI engine
+        shell: bash
+        env:
+          REUSE_CANDIDATE: ${{ inputs.reuse-verified-candidate }}
+        run: |
+          set -euo pipefail
+          expected_source="$(git rev-parse HEAD)"
+          if [ "$REUSE_CANDIDATE" = true ]; then
+            expected_source=f31dc867b78da8c8a001b801136e0bf2ff558677
+          fi
+          test "$(cat native-candidate/source.txt)" = "$expected_source"
+          sha256sum -c native-candidate/candidate.sha256
+          install -m 644 native-candidate/libprusaslicer-jni.so app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -42,6 +78,18 @@ jobs:
             -keyalg RSA -keysize 2048 -validity 3650 \
             -dname "CN=Android Test,O=NIGHT PRINT CI,C=JP"
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Verify the engine packaged in the test APK
+        run: |
+          set -euo pipefail
+          bash ./gradlew --no-daemon :app:assembleDebug
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          unzip -p "$apk" lib/arm64-v8a/libprusaslicer-jni.so > nightprint-e2e-ci/packaged-engine.so
+          expected=$(cut -d ' ' -f 1 native-candidate/candidate.sha256)
+          actual=$(sha256sum nightprint-e2e-ci/packaged-engine.so | cut -d ' ' -f 1)
+          rm nightprint-e2e-ci/packaged-engine.so
+          echo "$actual" > nightprint-e2e-ci/packaged-engine.sha256
+          test "$actual" = "$expected"
+          sha256sum "$apk" > nightprint-e2e-ci/test-apk.sha256
       - name: Real native Android instrumentation (API 35, ARM translation)
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -53,24 +101,7 @@ jobs:
           heap-size: 1024M
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
-          script: |
-            set +e
-            mkdir -p nightprint-e2e-ci
-            adb shell getprop ro.product.cpu.abilist > nightprint-e2e-ci/device-abi.txt
-            adb shell getprop ro.dalvik.vm.native.bridge >> nightprint-e2e-ci/device-abi.txt
-            bash ./gradlew --no-daemon :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.u1.slicer.slicing.NightPrintNativeE2ETest
-            result=$?
-            adb logcat -d -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I AndroidRuntime:E '*:S' > nightprint-e2e-ci/native-android-logcat.txt
-            DEVICE_REPORT_DIR=/sdcard/Android/data/com.u1.slicer.orca.genesis.qa3/files
-            adb pull "$DEVICE_REPORT_DIR/nightprint-native-e2e-report.json" nightprint-e2e-ci/raw-stl-native-evidence.json || true
-            adb pull "$DEVICE_REPORT_DIR/nightprint-3mf-profile-e2e-report.json" nightprint-e2e-ci/embedded-3mf-native-evidence.json || true
-            # A Gradle 'green' must not mean the tests were absent/skipped.
-            if [ "$result" -eq 0 ]; then
-              test -s nightprint-e2e-ci/raw-stl-native-evidence.json || result=1
-              test -s nightprint-e2e-ci/embedded-3mf-native-evidence.json || result=1
-            fi
-            echo "instrumentation and evidence exit=$result"
-            exit "$result"
+          script: bash .github/scripts/run-nightprint-android-e2e.sh
       - name: Upload native instrumentation results (including failed runs)
         if: always()
         uses: actions/upload-artifact@v4
