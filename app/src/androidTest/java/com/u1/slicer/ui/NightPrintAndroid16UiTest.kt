@@ -1,6 +1,7 @@
 package com.u1.slicer.ui
 
 import android.Manifest
+import android.accessibilityservice.AccessibilityService
 import android.app.Activity
 import android.app.Instrumentation
 import android.net.Uri
@@ -152,6 +153,12 @@ class NightPrintAndroid16UiTest {
             // A byte-for-byte match also waits for the asynchronous save copy to finish.
             awaitExport("complete saved G-code") { saved.length() == sharedBytes.size.toLong() }
             assertArrayEquals(sharedBytes, saved.readBytes())
+            awaitExport("visible Android resolver") {
+                val foreground = instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()
+                foreground == "android" || foreground?.endsWith(".intentresolver") == true
+            }
+            assertTrue(instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK))
+            await("Save")
             Log.i("NIGHTPRINT_EXPORT", "save_bytes=${saved.length()} share_bytes=${sharedBytes.size}")
         } finally {
             instrumentation.removeMonitor(monitor)

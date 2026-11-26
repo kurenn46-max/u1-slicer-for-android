@@ -27,6 +27,7 @@ collect_host_diagnostics() {
     free -m || true
     df -h . || true
     ps -eo pid,stat,comm,rss | grep -E 'adb|emulator|qemu' || true
+    timeout -k 2s 5s sudo -n dmesg --level=err,warn | grep -Ei 'qemu|emulator|oom|out of memory|segfault' | tail -40 || true
   } 2>&1
 }
 
