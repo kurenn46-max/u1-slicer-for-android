@@ -41,9 +41,8 @@ def validate(directory):
 def recover_from_logcat(directory):
     """Recover complete JSON emitted by passing Android instrumentation tests.
 
-    AndroidX Test Orchestrator clears app data between test invocations, so
-    files written to targetContext.getExternalFilesDir may not survive.
-    Only use exact test-tag lines containing a full JSON object.
+    Device files may disappear during instrumentation cleanup. The CI runner
+    captures fresh logcat using the brief format before the emulator shuts down.
     """
     directory = pathlib.Path(directory)
     log = directory / "native-android-logcat.txt"
@@ -53,33 +52,34 @@ def recover_from_logcat(directory):
         "NIGHTPRINT_E2E": "raw-stl-native-evidence.json",
         "NIGHTPRINT_3MF_E2E": "embedded-3mf-native-evidence.json",
     }
+    reports = {}
     for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
-        for tag, filename in tags.items():
-            match = re.search(r"\b" + re.escape(tag) + r"\s*:\s*(\{.*\})\s*$", line)
-            if not match:
-                continue
-            candidate = match.group(1)
-            if not candidate.startswith("{") or not candidate.endswith("}"):
-                continue
-            try:
-                obj = json.loads(candidate)
-            except ValueError:
-                continue
-            if not isinstance(obj, dict):
-                continue
-            status_key = FILES[filename][0]
-            if obj.get(status_key) != "PASS":
-                continue
-            target = directory / filename
-            if not target.exists():
-                target.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+        match = re.fullmatch(r"I/(NIGHTPRINT_E2E|NIGHTPRINT_3MF_E2E)\s*\(\s*\d+\):\s*(\{.*\})\s*", line)
+        if not match:
+            continue
+        tag, payload = match.groups()
+        obj = json.loads(payload)
+        previous = reports.setdefault(tags[tag], obj)
+        if previous != obj:
+            raise ValueError(f"conflicting reports for {tag}")
+
+    for filename, obj in reports.items():
+        target = directory / filename
+        if not target.exists() and not target.is_symlink():
+            with target.open("x", encoding="utf-8") as output:
+                json.dump(obj, output, indent=2)
+            print(f"{filename}: recovered from logcat")
 
 
 def main(argv):
     if len(argv) != 2:
         print("usage: verify_native_evidence.py DIR", file=sys.stderr)
         return 2
-    recover_from_logcat(argv[1])
+    try:
+        recover_from_logcat(argv[1])
+    except (OSError, ValueError) as exc:
+        print("FAIL: cannot recover logcat evidence:", exc, file=sys.stderr)
+        return 1
     errors = validate(argv[1])
     for error in errors:
         print("FAIL:", error, file=sys.stderr)

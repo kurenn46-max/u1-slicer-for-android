@@ -55,8 +55,8 @@ class NativeEvidenceTests(unittest.TestCase):
         (self.path / "raw-stl-native-evidence.json").unlink()
         (self.path / "embedded-3mf-native-evidence.json").unlink()
         log = (
-            '11-26 I NIGHTPRINT_E2E: {"test":"PASS","final_audit_pass":true,"gcode_bytes":200}\n'
-            '11-26 I NIGHTPRINT_3MF_E2E: {"result":"PASS","audit_passed":true,"gcode_bytes":400}\n'
+            'I/NIGHTPRINT_E2E( 1234): {"test":"PASS","final_audit_pass":true,"gcode_bytes":200}\n'
+            'I/NIGHTPRINT_3MF_E2E( 1234): {"result":"PASS","audit_passed":true,"gcode_bytes":400}\n'
         )
         (self.path / "native-android-logcat.txt").write_text(log)
         recover_from_logcat(self.path)
@@ -65,10 +65,18 @@ class NativeEvidenceTests(unittest.TestCase):
     def test_incomplete_logcat_does_not_fake_success(self):
         (self.path / "raw-stl-native-evidence.json").unlink()
         (self.path / "native-android-logcat.txt").write_text(
-            'I NIGHTPRINT_E2E: {"test":"PASS","final_audit_pass":true'
+            'I/NIGHTPRINT_E2E( 1234): {"test":"PASS","final_audit_pass":true'
         )
         recover_from_logcat(self.path)
         self.assertTrue(validate(self.path))
+
+    def test_conflicting_logcat_reports_fail(self):
+        (self.path / "native-android-logcat.txt").write_text(
+            'I/NIGHTPRINT_E2E( 1234): {"test":"PASS","gcode_bytes":200}\n'
+            'I/NIGHTPRINT_E2E( 1234): {"test":"PASS","gcode_bytes":400}\n'
+        )
+        with self.assertRaisesRegex(ValueError, "conflicting reports"):
+            recover_from_logcat(self.path)
 
     def test_symlink_fails(self):
         file = self.path / "raw-stl-native-evidence.json"
