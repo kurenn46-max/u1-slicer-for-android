@@ -15,6 +15,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api repos/kurenn46-max/u1-slicer-for-android/actions/artifacts/15126539819/zip > evidence.zip
-          echo '6ed5581aeb26734faaccea8f32316de60c7df2561f87ffd17392faac7e80bbd1  evidence.zip' | sha256sum -c
-          unzip -p evidence.zip 'app/build/outputs/androidTest-results/connected/debug/TEST-*.xml' | grep -E -A 18 '<failure' | head -60 || true
+          gh api repos/kurenn46-max/u1-slicer-for-android/actions/artifacts/15152341211/zip > evidence.zip
+          echo '707cbd03123f69408e6e9536ecc412b93190ca4b23f090d882941a99c16e141b  evidence.zip' | sha256sum -c
+          unzip -p evidence.zip nightprint-e2e-ci/host-final.txt
+          unzip -p evidence.zip nightprint-e2e-ci/live-logcat.txt | tail -100
+          unzip -p evidence.zip 'nightprint-e2e-ci/ui-results/**/TEST-*.xml' | grep -E -A 18 '<failure|<error' | head -80 || true
+          unzip -p evidence.zip '*logcat-com.u1.slicer.ui.NightPrintAndroid16UiTest-tpu*.txt' | grep -Ei 'FATAL|OutOfMemory|ANR in|OpenGL|SaveGcode|NIGHTPRINT_EXPORT|killed|died|segfault' | tail -80 || true
