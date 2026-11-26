@@ -18,5 +18,4 @@ if (( result != 0 )); then
   exit "$result"
 fi
 
-jq -e '.test == "PASS" and .final_audit_pass == true and .gcode_bytes > 0' "$out/raw-stl-native-evidence.json"
-jq -e '.result == "PASS" and .audit_passed == true and .gcode_bytes > 0' "$out/embedded-3mf-native-evidence.json"
+python3 tools/nightcore/verify_native_evidence.py "$out"
