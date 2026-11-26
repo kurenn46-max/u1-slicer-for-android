@@ -24,6 +24,7 @@ import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
 import com.u1.slicer.data.PrintersConfig
 import com.u1.slicer.data.PrintersRepository
+import com.u1.slicer.data.NightPrintGcodeAudit
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipEntry
@@ -116,7 +117,7 @@ class NightPrintAndroid16UiTest {
         error("Timed out waiting for $description")
     }
 
-    private fun verifySaveAndShare() {
+    private fun verifySaveAndShare(expectedPetg: Boolean = false) {
         val saved = File(app.cacheDir, "qa4-save-${SystemClock.elapsedRealtime()}.gcode")
         val destination = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", saved)
         val saveRequest = AtomicReference<Intent?>()
@@ -156,6 +157,10 @@ class NightPrintAndroid16UiTest {
             // A byte-for-byte match also waits for the asynchronous save copy to finish.
             awaitExport("complete saved G-code") { saved.length() == sharedBytes.size.toLong() }
             assertArrayEquals(sharedBytes, saved.readBytes())
+            if (expectedPetg) {
+                val audit = NightPrintGcodeAudit.inspect(saved, "PETG", 235, 70)
+                assertTrue("Exported PETG G-code must pass the safety audit: ${audit.errors}", audit.passed)
+            }
             Log.i("NIGHTPRINT_EXPORT", "save_bytes=${saved.length()} share_bytes=${sharedBytes.size}")
         } finally {
             instrumentation.removeMonitor(monitor)
@@ -194,6 +199,43 @@ class NightPrintAndroid16UiTest {
             await("ノズル: 235℃・ベッド: 70℃")
             compose.onNodeWithText("閉じる").performClick()
             await("Slice Model")
+        }
+    }
+
+    /**
+     * Product acceptance: PETG must either produce audited/savable A1 mini G-code,
+     * or explicitly HOLD the job without offering export. A HOLD is not a
+     * printable-product pass: the outcome is recorded separately in CI logs.
+     */
+    @Test fun petgJobSliceReachesVerifiedOutputOrExplicitSafetyHold() {
+        launch(job("PETG", 235, 70), useA1Mini = true) {
+            await("印刷ジョブを読み込みました")
+            await("材料: PETG")
+            await("ノズル: 235℃・ベッド: 70℃")
+            compose.onNodeWithText("閉じる").performClick()
+            await("Slice Model")
+            compose.onNodeWithText("Slice Model").performClick()
+            compose.waitUntil(120_000L) {
+                compose.onAllNodes(hasText("NIGHT PRINT safety check blocked this G-code.", substring = true))
+                    .fetchSemanticsNodes().isNotEmpty() ||
+                compose.onAllNodes(hasText("Save")).fetchSemanticsNodes().isNotEmpty()
+            }
+            val safetyHold = compose.onAllNodes(
+                hasText("NIGHT PRINT safety check blocked this G-code.", substring = true)
+            ).fetchSemanticsNodes().isNotEmpty()
+            if (safetyHold) {
+                await("PETG elevated startup heat is not qualified for printing")
+                assertTrue(
+                    "Blocked PETG G-code must not be exportable",
+                    compose.onAllNodes(hasText("Save")).fetchSemanticsNodes().isEmpty() &&
+                    compose.onAllNodes(hasText("Share")).fetchSemanticsNodes().isEmpty()
+                )
+                Log.i("NIGHTPRINT_PETG_E2E", "status=HOLD reason=unqualified_startup_heat")
+            } else {
+                await("Share")
+                verifySaveAndShare(expectedPetg = true)
+                Log.i("NIGHTPRINT_PETG_E2E", "status=VERIFIED export_bytes_match=true")
+            }
         }
     }
 
