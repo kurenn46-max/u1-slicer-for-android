@@ -14,9 +14,11 @@ bash ./gradlew --no-daemon :app:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.class=com.u1.slicer.slicing.NightPrintNativeE2ETest || result=$?
 adb logcat -d -v brief -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I AndroidRuntime:E '*:S' > "$out/native-android-logcat.txt" || true
 {
-  adb shell pm path com.u1.slicer.orca.genesis.qa3 || true
+  echo "QA3 package after connectedDebugAndroidTest:"
+  adb shell pm path com.u1.slicer.orca.genesis.qa3 || echo "QA3 package is absent"
+  echo "Audit directory after connectedDebugAndroidTest:"
   adb shell ls -ld "$reports" || true
-} > "$out/post-test-device-state.txt" 2>&1
+} 2>&1 | tee "$out/post-test-device-state.txt"
 adb pull "$reports/nightprint-native-e2e-report.json" "$out/raw-stl-native-evidence.json" || true
 adb pull "$reports/nightprint-3mf-profile-e2e-report.json" "$out/embedded-3mf-native-evidence.json" || true
 if (( result != 0 )); then

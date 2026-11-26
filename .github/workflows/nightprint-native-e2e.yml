@@ -114,7 +114,7 @@ jobs:
           git rev-parse HEAD > nightprint-e2e-ci/tested-source.txt
           mkdir verified-apk
           cp "$apk" verified-apk/night-print-genesis-qa3-arm64.apk
-          (cd verified-apk && sha256sum night-print-genesis-qa3-arm64.apk > SHA256SUMS)
+          (cd verified-apk && sha256sum night-print-genesis-qa3-arm64.apk | tee SHA256SUMS)
       - name: Upload the verified installable QA APK
         uses: actions/upload-artifact@v4
         with:
