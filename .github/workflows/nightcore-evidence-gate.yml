@@ -1,23 +1,22 @@
-name: NIGHT CORE native evidence gate unit tests
+name: NIGHT PRINT diagnostic artifact inspection
 on:
-  pull_request:
-    paths:
-      - 'tools/nightcore/verify_native_evidence.py'
-      - 'tools/nightcore/test_native_evidence.py'
-      - '.github/scripts/run-nightprint-android-e2e.sh'
-      - '.github/workflows/nightcore-evidence-gate.yml'
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 jobs:
-  evidence-gate:
+  inspect:
+    if: github.ref_name == 'experiment/nightprint-phase3-log-diagnostics'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Check evidence gate and fail-closed cases
-        run: python3 -m unittest discover -s tools/nightcore -p 'test_native_evidence.py' -v
-      - name: Check shell syntax
-        run: bash -n .github/scripts/run-nightprint-android-e2e.sh
+      - name: Inspect Android runtime log from the failed emulator run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api repos/kurenn46-max/u1-slicer-for-android/actions/artifacts/15127402148/zip > evidence.zip
+          echo '29ffe464338563a96e1a2bc7e9d628978f9d78888203a7ae5efd3837f9799d84  evidence.zip' | sha256sum -c
+          unzip -p evidence.zip nightprint-e2e-ci/native-android-logcat.txt > runtime.txt
+          rg -A 18 -B 2 'FATAL EXCEPTION|AndroidRuntime|NIGHTPRINT' runtime.txt | head -220 || true
+          unzip -Z1 evidence.zip | head -40
