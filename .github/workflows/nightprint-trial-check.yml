@@ -93,7 +93,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Save QA-candidate APK ONLY after all gates pass
-        if: success()
+        if: success() && github.head_ref != 'feature/nightprint-genesis-android16-qa'
         uses: actions/upload-artifact@v4
         with:
           name: nightprint-QA-candidate-${{ github.sha }}

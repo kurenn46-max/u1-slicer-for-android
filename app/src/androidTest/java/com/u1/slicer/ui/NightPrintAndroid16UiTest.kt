@@ -2,6 +2,7 @@ package com.u1.slicer.ui
 
 import android.Manifest
 import android.content.Intent
+import android.os.Build
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -11,7 +12,6 @@ import androidx.core.content.FileProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.rule.GrantPermissionRule
 import com.u1.slicer.MainActivity
 import com.u1.slicer.data.BambuConfig
 import com.u1.slicer.data.BambuModel
@@ -30,12 +30,14 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class NightPrintAndroid16UiTest {
     @get:Rule val compose = createEmptyComposeRule()
-    @get:Rule val notifications = GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
 
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val app get() = instrumentation.targetContext
 
     private fun launch(file: File, useA1Mini: Boolean = false): ActivityScenario<MainActivity> {
+        if (Build.VERSION.SDK_INT >= 33) {
+            instrumentation.uiAutomation.grantRuntimePermission(app.packageName, Manifest.permission.POST_NOTIFICATIONS)
+        }
         val printer = if (useA1Mini) {
             Printer("qa", "Offline A1 mini fixture", PrinterKind.BAMBU_LAN,
                 bambu = BambuConfig("127.0.0.1", "00000000", "QA", BambuModel.A1_MINI))
