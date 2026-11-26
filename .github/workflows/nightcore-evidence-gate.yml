@@ -4,11 +4,14 @@ on:
     paths:
       - 'tools/nightcore/verify_native_evidence.py'
       - 'tools/nightcore/test_native_evidence.py'
+      - 'tools/nightcore/recover_evidence.py'
+      - 'tools/nightcore/test_recover_evidence.py'
       - '.github/scripts/run-nightprint-android-e2e.sh'
       - '.github/workflows/nightcore-evidence-gate.yml'
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 jobs:
   evidence-gate:
     runs-on: ubuntu-24.04
@@ -18,6 +21,40 @@ jobs:
         with:
           persist-credentials: false
       - name: Check evidence gate and fail-closed cases
-        run: python3 -m unittest discover -s tools/nightcore -p 'test_native_evidence.py' -v
+        run: python3 -m unittest discover -s tools/nightcore -p 'test_*.py' -v
       - name: Check shell syntax
         run: bash -n .github/scripts/run-nightprint-android-e2e.sh
+
+      - name: Revalidate recovery with previously verified Android evidence
+        if: github.repository == 'kurenn46-max/u1-slicer-for-android' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'experiment/nightcore-recovery-loop-v1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          endpoint=repos/kurenn46-max/u1-slicer-for-android/actions/artifacts/15120427540
+          digest=1ccdd47456ffc769d4504c7ae010cfb837015012575b4776b0215265ebbab145
+          if ! gh api "$endpoint/zip" > "$RUNNER_TEMP/nightcore-input.zip" 2>/dev/null; then
+            echo "Cannot retrieve pinned Android evidence artifact 15120427540." >&2
+            exit 1
+          fi
+          echo "$digest  $RUNNER_TEMP/nightcore-input.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/nightcore-input.zip" -d "$RUNNER_TEMP/nightcore-input"
+          evidence="$RUNNER_TEMP/nightcore-input/nightprint-e2e-ci"
+          python3 tools/nightcore/verify_native_evidence.py "$evidence"
+          mkdir "$RUNNER_TEMP/nightcore-log-only"
+          cp "$evidence/native-android-logcat.txt" "$RUNNER_TEMP/nightcore-log-only/"
+          python3 tools/nightcore/recover_evidence.py "$RUNNER_TEMP/nightcore-log-only" \
+            --output nightcore-recovery --source-sha "$(cat "$evidence/tested-source.txt")" \
+            --recovery-sha "$(git rev-parse HEAD)" --instrumentation-exit 0 \
+            --artifact-url https://github.com/kurenn46-max/u1-slicer-for-android/actions/runs/45825074561/artifacts/15120427540
+          for report in raw-stl-native-evidence.json embedded-3mf-native-evidence.json; do
+            diff <(jq -S . "$evidence/$report") <(jq -S . "nightcore-recovery/evidence/$report")
+          done
+      - name: Archive the recovery checkpoint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightcore-recovery-${{ github.run_id }}
+          path: nightcore-recovery/
+          if-no-files-found: ignore
+          retention-days: 14
