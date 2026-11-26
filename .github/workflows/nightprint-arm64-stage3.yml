@@ -16,7 +16,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: nightprint-arm64-stage3
+  group: nightprint-arm64-stage3-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   select-candidate:
@@ -34,8 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           reuse=false
-          if [ "$(git rev-parse HEAD:app)" = 69d4e1c6a03bb39bdc3b12e27cc05a102b4585ba ] &&
-             [ "$(git rev-parse HEAD:scripts)" = e9a7f1c85d350dd12a8ce48c6e5e5e348a2c7a94 ]; then
+          if bash .github/scripts/check-nightprint-native-inputs.sh; then
             reuse=true
           fi
           echo "Reuse verified JNI candidate: $reuse"

@@ -97,13 +97,13 @@ class MainActivity : ComponentActivity() {
     private var testReceiver: TestCommandReceiver? = null
     private var launchApkUpdateTime: Long = 0L
     private var pendingNavigateTo: String? = null
+    private var nightPrintImportNotice by mutableStateOf<Pair<String, String>?>(null)
     private var navigateTabCallback: ((String) -> Unit)? = null
 
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
         if (uris.isNullOrEmpty()) return@registerForActivityResult
-        viewModel.setLoadingFromPicker()
         if (uris.size == 1) {
             val selected = uris.first()
             val name = viewModel.getFileDisplayName(selected)
@@ -113,6 +113,12 @@ class MainActivity : ComponentActivity() {
                 return@registerForActivityResult
             }
         }
+        if (uris.size > 1 && uris.any { isNightPrintJobFilename(viewModel.getFileDisplayName(it)) }) {
+            nightPrintImportNotice = "印刷ジョブを開けません" to
+                ".npjobはモデルと設定がセットになっています。1件ずつ選んでください。"
+            return@registerForActivityResult
+        }
+        viewModel.setLoadingFromPicker()
         // F77 (GitHub #109): multi-select picker. One file uses the legacy
         // path; many files run through the multi-STL combiner.
         val supportedUris = uris.filter {
@@ -239,17 +245,19 @@ class MainActivity : ComponentActivity() {
                     input.use { NightPrintJobPackage.unpack(it, java.io.File(cacheDir, "nightprint_jobs")) }
                 }
                 viewModel.openNightPrintJob(job, autoSlice = false) { error ->
-                    val message = if (error == null)
-                        "NIGHT PRINT job loaded. Review TPU and slice settings before printing."
-                    else "NIGHT PRINT import error: $error"
-                    android.widget.Toast.makeText(this@MainActivity, message, android.widget.Toast.LENGTH_LONG).show()
+                    nightPrintImportNotice = if (error == null) {
+                        "印刷ジョブを読み込みました" to
+                            "材料: ${job.preset.material}\nノズル: ${job.preset.nozzleC}℃・ベッド: ${job.preset.bedC}℃\n実際に装着した材料を確認し、スライスしてください。"
+                    } else {
+                        "印刷ジョブを開けません" to error
+                    }
                 }
-            } catch (t: Exception) {
-                android.widget.Toast.makeText(
-                    this@MainActivity,
-                    "NIGHT PRINT job import error: " + (t.message ?: "invalid package"),
-                    android.widget.Toast.LENGTH_LONG
-                ).show()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                nightPrintImportNotice = "印刷ジョブを開けません" to
+                    ("ファイルが破損しているか、設定の形式・範囲が正しくありません。元の.npjobを確認してください。\n" +
+                        (error.message ?: ""))
             }
         }
     }
@@ -658,6 +666,17 @@ class MainActivity : ComponentActivity() {
                     "model/obj",
                     "*/*"  // fallback — Android file managers don't recognize model/* MIME types
                 )
+
+                nightPrintImportNotice?.let { (title, message) ->
+                    AlertDialog(
+                        onDismissRequest = { nightPrintImportNotice = null },
+                        title = { Text(title) },
+                        text = { Text(message, modifier = Modifier.verticalScroll(rememberScrollState())) },
+                        confirmButton = {
+                            TextButton(onClick = { nightPrintImportNotice = null }) { Text("閉じる") }
+                        },
+                    )
+                }
 
                 U1NavGraph(
                     navController = navController,

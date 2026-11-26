@@ -4680,6 +4680,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         viewModelScope.launch {
             try {
+                val printer = printersRepo.activePrinter.first()
+                if (printer?.kind != com.u1.slicer.data.PrinterKind.BAMBU_LAN ||
+                    printer.bambu?.model != com.u1.slicer.data.BambuModel.A1_MINI
+                ) {
+                    job.model.delete()
+                    onResult("プリンター画面でBambu Lab A1 miniを選択し、ジョブを開き直してください。")
+                    return@launch
+                }
                 _state.value = SlicerState.Loading("Opening NIGHT PRINT model")
                 loadModelFromFile(job.model)
                 val loadState = withTimeout(120_000L) {
@@ -4703,11 +4711,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val activePrinter = activePrinterForSlicing.value
         if (activePrinter?.kind != com.u1.slicer.data.PrinterKind.BAMBU_LAN ||
             activePrinter.bambu?.model != com.u1.slicer.data.BambuModel.A1_MINI) {
-            onResult("Select the Bambu Lab A1 mini printer before applying this preset.")
+            onResult("プリンター画面でBambu Lab A1 miniを選択し、ジョブを開き直してください。")
             return
         }
         if (_config.value.extruderCount != 1 || _selectedExtruder.value != 0) {
-            onResult("This experimental code requires a single-filament job using slot 1.")
+            onResult("この印刷ジョブではスロット1の単一フィラメントを選択してください。")
             return
         }
 

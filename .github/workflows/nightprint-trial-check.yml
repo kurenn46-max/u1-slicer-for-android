@@ -73,8 +73,8 @@ jobs:
           AAPT="$ANDROID_HOME/build-tools/34.0.0/aapt"
           APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner"
           BADGING=$("$AAPT" dump badging "$APK")
-          echo "$BADGING" | grep -Fq "package: name='com.u1.slicer.orca.genesis.qa3'"
-          echo "$BADGING" | grep -Fq "application-label:'NIGHT PRINT GENESIS QA3'"
+          echo "$BADGING" | grep -Fq "package: name='com.u1.slicer.orca.genesis.qa4'"
+          echo "$BADGING" | grep -Fq "application-label:'NIGHT PRINT GENESIS QA4'"
           "$APKSIGNER" verify --verbose "$APK"
           unzip -Z1 "$APK" | grep -Fxq 'lib/arm64-v8a/libprusaslicer-jni.so'
           echo "### NIGHT PRINT GENESIS automated gate" >> "$GITHUB_STEP_SUMMARY"
@@ -93,7 +93,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Save QA-candidate APK ONLY after all gates pass
-        if: success()
+        if: success() && github.head_ref != 'feature/nightprint-genesis-android16-qa'
         uses: actions/upload-artifact@v4
         with:
           name: nightprint-QA-candidate-${{ github.sha }}
