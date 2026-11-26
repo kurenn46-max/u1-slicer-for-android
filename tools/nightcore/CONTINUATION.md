@@ -35,3 +35,25 @@ does not add scheduling or mutate application code. The experimental PR's
 existing evidence CI exercises recovery using a SHA256-pinned Android artifact.
 Automatic source repair, scheduled adapter execution and physical printing
 require separate verification.
+
+## Phase 2 operational cycle
+
+The read-only Actions job discovers the current PR #2–#4 SHAs, then inspects
+the newest native CI run for the exact PR #3 head. It reads the latest
+available Phase 2 checkpoint from the same workflow and recovers missing
+audit reports only when the Android instrumentation step succeeded. Archive
+ownership, run ID, SHA256 and size are checked before reading selected files.
+Result `PASS` concerns the archive audit only. `HOLD` records unresolved
+conditions, `FAIL` records unsuccessful repair, and `SKIPPED` references an
+earlier outcome for the same head and fault. One repair per run is sufficient
+for the only supported correction. Deduplication depends on retained Actions
+checkpoints (14 days). Expired evidence or a failed archive request must not
+be treated as successful verification.
+
+The existing workflow has a manual dispatch and a twice-daily schedule
+(00:17/12:17 UTC, 09:17/21:17 JST). The operational job serializes invocations,
+does not enqueue other workflows, and only reads GitHub using the job's
+built-in read token. A scheduled run reads the operational branch while
+GitHub requires the schedule definition on the default branch. The draft PR
+does not enable that default-branch trigger. Existing ChatGPT tasks and
+NIGHT WATCH can continue their broader development and supervisory work.
