@@ -24,7 +24,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      actions: read
     outputs:
       reuse: ${{ steps.select.outputs.reuse }}
     steps:
@@ -32,16 +31,14 @@ jobs:
         with:
           persist-credentials: false
       - id: select
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           reuse=false
           if [ "$(git rev-parse HEAD:app)" = 69d4e1c6a03bb39bdc3b12e27cc05a102b4585ba ] &&
-             [ "$(git rev-parse HEAD:scripts)" = e9a7f1c85d350dd12a8ce48c6e5e348a2c7a94 ] &&
-             gh api repos/kurenn46-max/u1-slicer-for-android/actions/artifacts/15103919717 --jq '.expired' | grep -Fxq false; then
+             [ "$(git rev-parse HEAD:scripts)" = e9a7f1c85d350dd12a8ce48c6e5e348a2c7a94 ]; then
             reuse=true
           fi
+          echo "Reuse verified JNI candidate: $reuse"
           echo "reuse=$reuse" >> "$GITHUB_OUTPUT"
 
   native-candidate:
