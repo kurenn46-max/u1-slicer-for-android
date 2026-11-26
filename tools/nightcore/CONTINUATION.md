@@ -57,3 +57,37 @@ built-in read token. A scheduled run reads the operational branch while
 GitHub requires the schedule definition on the default branch. The draft PR
 does not enable that default-branch trigger. Existing ChatGPT tasks and
 NIGHT WATCH can continue their broader development and supervisory work.
+
+## Phase 3 PR supervision
+
+The supervisor discovers open PRs through the GitHub API. It excludes its own
+experimental branch to avoid observing and reporting its own output. A result
+applies only when the PR number, head and base SHA match the workflow run.
+The generic observation and reporting rules live in supervision.py. Android
+diagnostics, JUnit parsing and audit recovery live in nightprint_monitor.py.
+A second project can keep the first set of rules and supply its own evidence
+adapter.
+
+The manual entry point is the existing evidence workflow on
+experiment/nightcore-supervisor-v3. Read phase3.json and summary.md from the
+nightcore-phase3-state artifact. It includes the previous checkpoint's artifact
+ID when resuming. If a copy of the same run is requested, the previous attempt
+can be read from its separately named artifact. Checkpoints expire after 14
+days. Restart after expiry requires a fresh observation. An interrupted repair
+with a saved reservation is held when the input stays the same.
+
+The only automatic repair is reconstructing missing audit JSON from vetted
+Android logcat and rerunning the audit validator. This does not change the app,
+rerun its build, or approve a release. ADB disconnects, failed tests, provenance
+gaps and unknown log patterns require investigation. The supervisor never
+dispatches a different workflow. It reads at most 25 open PRs, keeps one current
+run per workflow, and records evidence gaps when listing limits are reached.
+
+The proposed nightly invocation is 02:17 JST. GitHub requires the workflow on
+the default branch to deliver schedule events. Activation also requires the
+repository variable NIGHTCORE_PHASE3_SCHEDULE_ENABLED to be true. Review the
+default-branch proposal and confirm an actual schedule run before treating it
+as operational. The job checks out the triggering commit, serializes
+invocations, caps its scan at four minutes and uploads evidence even after
+ordinary failures. A forced runner stop can prevent uploads; the next run then
+uses the most recent retained checkpoint.
