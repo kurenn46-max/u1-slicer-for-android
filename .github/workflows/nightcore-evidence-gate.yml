@@ -18,5 +18,5 @@ jobs:
           gh api repos/kurenn46-max/u1-slicer-for-android/actions/artifacts/15127402148/zip > evidence.zip
           echo '29ffe464338563a96e1a2bc7e9d628978f9d78888203a7ae5efd3837f9799d84  evidence.zip' | sha256sum -c
           unzip -p evidence.zip nightprint-e2e-ci/native-android-logcat.txt > runtime.txt
-          rg -A 18 -B 2 'FATAL EXCEPTION|AndroidRuntime|NIGHTPRINT' runtime.txt | head -220 || true
-          unzip -Z1 evidence.zip | head -40
+          grep -E -A 18 -B 2 'FATAL EXCEPTION|AndroidRuntime|NIGHTPRINT' runtime.txt | head -220 || true
+          unzip -p evidence.zip '*logcat-com.u1.slicer.ui.NightPrintAndroid16UiTest-stlOpensIntoPrepareScreen.txt' | grep -Ei -A 12 'FATAL EXCEPTION|Caused by|ANR|SlicerVM|ActivityScenario|AndroidRuntime|Exception' | head -150 || true
