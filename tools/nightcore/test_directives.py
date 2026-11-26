@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -55,6 +56,11 @@ class DirectiveTests(unittest.TestCase):
         self.assertEqual(downstream["blocked_by"], [upstream["id"]])
         self.assertEqual(downstream["status"], "blocked_by_dependency")
         self.assertNotIn("## PR #2", render_files(data)["codex-prompts.md"])
+
+    def test_build_mismatch_is_reviewed_before_external_outage(self):
+        data = build(checkpoint(entry(1, "maven_central_rate_limit"), entry(2, "stale_arm64_jni")))
+        self.assertEqual([task["kind"] for task in data["directives"]],
+                         ["stale_arm64_jni", "maven_central_rate_limit"])
 
     def test_duplicate_observations_and_reruns_keep_one_task_and_key(self):
         first = entry(2, "maven_central_rate_limit")
@@ -149,9 +155,14 @@ def live(directory, snapshot):
         for name, content in expected.items():
             if name != "directives.ja.md":
                 (copied / name).write_text(content)
-        if (repair_missing(copied, bundle) != ["directives.ja.md"]
+        (copied / "directives.json").write_bytes((directory / "directives.json").read_bytes())
+        command = [sys.executable, str(Path(__file__).with_name("directives.py")), str(copied),
+                   "--checkpoint", str(snapshot), "--repair-missing"]
+        restored = json.loads(subprocess.check_output(command, text=True, timeout=10))
+        repeated = json.loads(subprocess.check_output(command, text=True, timeout=10))
+        if (restored != {"restored": ["directives.ja.md"]}
                 or (copied / "directives.ja.md").read_text() != expected["directives.ja.md"]
-                or repair_missing(copied, bundle)):
+                or repeated != {"restored": []}):
             raise ValueError("report repair was not exact and idempotent")
     print("Validated command JSON, Japanese report, Codex candidates and Summary. "
           "Restored a missing Japanese report from the real checkpoint; duplicate repair count 0.",

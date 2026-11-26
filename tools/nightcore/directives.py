@@ -4,6 +4,7 @@ import hashlib
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from jsonschema import Draft7Validator
 
@@ -16,6 +17,7 @@ ROOT = f"https://github.com/{REPO}"
 SCHEMA = Path(__file__).with_name("directives.schema.json")
 FAILED = {"failure", "timed_out", "cancelled", "startup_failure", "action_required"}
 HUMAN_CHECK = "ナイトが対象SHA、証拠、担当の重複を確認してから、隔離ブランチのCodexへ渡してください。"
+PRIORITY = ("build_mismatch", "source_defect", "test_environment", "transient_external", "unclassified")
 
 
 def run_url(run_id):
@@ -137,7 +139,7 @@ def build(checkpoint):
         "execution": {"handoff_mode": "file_only", "codex_sessions_started": 0,
                       "ci_reruns_requested": 0, "completed_audit_repairs": repairs},
         "pull_requests": sorted(inventory, key=lambda item: item["pr"]),
-        "directives": sorted(tasks, key=lambda task: (task["pr"], task["kind"])),
+        "directives": sorted(tasks, key=lambda task: (PRIORITY.index(task["category"]), task["pr"], task["kind"])),
         "history": historical_qa4(prs, tasks),
     }
 
@@ -218,6 +220,8 @@ def render_summary(bundle):
         f"- レビュー待ち {counts['review_required']}件／依存待ち {counts['blocked_by_dependency']}件／調査のみ {counts['diagnosis_only']}件",
         "- Codex起動0件／CI再試行0件",
         "- 成果物 nightcore-phase31-directives にJSON・Schema・日本語指令書・Codex候補を保存",
+        *[f"- PR #{task['pr']} {task['kind']} · [根拠CI]({task['evidence'][0]['ci_url']})"
+          for task in bundle["directives"] if task["status"] == "review_required"],
     ]) + "\n"
 
 
@@ -237,8 +241,14 @@ def repair_missing(directory, bundle):
         if not path.exists():
             missing.append(name)
     for name in missing:
-        with (directory / name).open("x", encoding="utf-8") as target:
-            target.write(expected[name])
+        with NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, delete=False) as target:
+            temporary = Path(target.name)
+            try:
+                target.write(expected[name])
+                target.close()
+                (directory / name).hardlink_to(temporary)
+            finally:
+                temporary.unlink()
     return missing
 
 
@@ -252,7 +262,9 @@ def main():
     validate_bundle(bundle)
     if args.repair_missing:
         # Derive text only from the original checkpoint; never trust text in the ZIP.
-        if json.loads((args.output / "directives.json").read_text(encoding="utf-8")) != bundle:
+        payload = args.output / "directives.json"
+        if (args.output.is_symlink() or payload.is_symlink()
+                or json.loads(payload.read_text(encoding="utf-8")) != bundle):
             raise ValueError("existing JSON differs from the source checkpoint")
         print(json.dumps({"restored": repair_missing(args.output, bundle)}))
         return
