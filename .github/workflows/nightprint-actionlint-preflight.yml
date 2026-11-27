@@ -1,0 +1,67 @@
+name: NIGHT PRINT free Actions static preflight
+
+# Additive, read-only check. Does not build an APK, run Android or use secrets.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - '.github/scripts/**'
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: Check workflow syntax and expressions (actionlint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: false
+      - name: Run pinned actionlint without Android emulator
+        shell: bash
+        env:
+          GOSUMDB: sum.golang.org
+          GOPROXY: https://proxy.golang.org
+          # Two existing workflows have SC2129 style-only redirects; preserve
+          # other ShellCheck diagnostics and report this baseline separately.
+          SHELLCHECK_OPTS: --exclude=SC2129
+        run: |
+          set -euo pipefail
+          mkdir -p nightprint-actionlint-report "$RUNNER_TEMP/nightprint-actionlint-bin"
+          GOBIN="$RUNNER_TEMP/nightprint-actionlint-bin" \
+            go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
+          "$RUNNER_TEMP/nightprint-actionlint-bin/actionlint" -version \
+            | tee nightprint-actionlint-report/version.txt
+          result=0
+          "$RUNNER_TEMP/nightprint-actionlint-bin/actionlint" -color=false -oneline \
+            > nightprint-actionlint-report/findings.txt 2>&1 || result=$?
+          cat nightprint-actionlint-report/findings.txt
+          printf '%s\n' "$result" > nightprint-actionlint-report/exit-code.txt
+          printf '%s\n' "${GITHUB_SHA}" > nightprint-actionlint-report/commit-sha.txt
+          {
+            echo '### NIGHT PRINT actionlint static preflight'
+            printf "Pinned tool: rhysd/actionlint@v1.7.11; exit code: %s\\n" "$result"
+            echo 'No Android emulator, paid API, production merge or printer access.'
+            if [ "$result" -eq 0 ]; then
+              echo 'Actionlint found no errors in the scanned workflow files.'
+            else
+              echo 'Actionlint found errors, or installation/execution failed. **Not a product pass.**'
+            fi
+            echo 'See artifact for raw findings; this does not certify NIGHT PRINT APK.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$result"
+      - name: Preserve diagnostics even when actionlint fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightprint-actionlint-report
+          path: nightprint-actionlint-report/
+          if-no-files-found: warn
+          retention-days: 7
