@@ -120,17 +120,25 @@ if [[ "$stage" == ui ]]; then
 fi
 
 run_suite() {
-  local suite="$1" class="$2" expected="$3" result=0
-  local results=app/build/outputs/androidTest-results/connected
+  local suite="$1" class="$2" expected="$3" excluded="${4:-}" result=0
+  local results=app/build/outputs/androidTest-results/connected evidence="$out/$1-results"
+  local filters=("-Pandroid.testInstrumentationRunnerArguments.class=$class")
+  if [[ -n "$excluded" ]]; then
+    filters+=("-Pandroid.testInstrumentationRunnerArguments.notClass=$excluded")
+  fi
+  if [[ "$suite" == ui-* ]]; then
+    mkdir -p "$out/ui-results"
+    evidence="$out/ui-results/${suite#ui-}"
+  fi
   if ! connection_state; then
     echo "ADB lost before $suite suite" >&2
     return 69
   fi
   rm -rf -- "$results" || return
   timeout -k 15s 7m bash ./gradlew --no-daemon :app:connectedDebugAndroidTest \
-    "-Pandroid.testInstrumentationRunnerArguments.class=$class" 2>&1 | tee "$out/$suite-gradle.log" || result=$?
+    "${filters[@]}" 2>&1 | tee "$out/$suite-gradle.log" || result=$?
   if [[ -d "$results" ]]; then
-    cp -a "$results" "$out/$suite-results" || return
+    cp -a "$results" "$evidence" || return
   fi
   printf '%s\n' "$result" > "$out/$suite-exit-code.txt"
   if ! connection_state; then
@@ -140,12 +148,12 @@ run_suite() {
   if (( result != 0 )); then
     return "$result"
   fi
-  python3 - "$out/$suite-results" "$class" "$expected" <<'PY' || return
+  python3 - "$evidence" "$class" "$expected" "$excluded" <<'PY' || return
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-directory, classnames, expected = sys.argv[1:]
+directory, selectors, expected, excluded = sys.argv[1:]
 cases = [
     (case.get("classname"), case.get("name"), case)
     for report in Path(directory).rglob("TEST-*.xml")
@@ -154,14 +162,21 @@ cases = [
 names = {(classname, name) for classname, name, _ in cases}
 if len(names) != len(cases) or any(not name for _, name in names):
     raise SystemExit("Duplicate or unnamed JUnit testcase")
-classes = dict(zip(classnames.split(","), map(int, expected.split(",")), strict=True))
+classes = {}
+for selector, count in zip(selectors.split(","), map(int, expected.split(",")), strict=True):
+    classname, _, method = selector.partition("#")
+    classes[classname] = count, method
+if excluded.replace("#", ".", 1) in {f"{classname}.{name}" for classname, name in names}:
+    raise SystemExit("Excluded JUnit case ran in the general group")
 if {classname for classname, _, _ in cases} != classes.keys():
     raise SystemExit("JUnit classes do not match the selected suites")
-for classname, count in classes.items():
+for classname, (count, method) in classes.items():
     selected = [(name, case) for group, name, case in cases if group == classname]
     if len(selected) != count:
         raise SystemExit(f"{classname}: expected {count} distinct tests, found {len(selected)}")
-    if classname.endswith("NightPrintAndroid16UiTest") and not any(
+    if method and {name for name, _ in selected} != {method}:
+        raise SystemExit(f"{classname}: did not run the selected {method}")
+    if classname.endswith("NightPrintAndroid16UiTest") and not method and not any(
         name == "petgJobSliceReachesVerifiedOutputOrExplicitSafetyHold" for name, _ in selected
     ):
         raise SystemExit("Missing PETG UI acceptance test")
@@ -189,7 +204,18 @@ if [[ "$stage" == native ]]; then
   exit 0
 fi
 
-ui_result=0
-run_suite ui com.u1.slicer.ui.NightPrintAndroid16UiTest 8 || ui_result=$?
+ui_class=com.u1.slicer.ui.NightPrintAndroid16UiTest
+tpu_case="$ui_class#tpuJobAppliesSettingsAndCanSliceFromPrepareScreen"
+general_result=0
+tpu_result=0
+# Verify the PETG HOLD and other UI cases before the previously disruptive chooser case.
+run_suite ui-general "$ui_class" 7 "$tpu_case" || general_result=$?
+if connection_state; then
+  run_suite ui-tpu "$tpu_case" 1 || tpu_result=$?
+else
+  tpu_result=69
+fi
 device logcat -d -v brief -s NIGHTPRINT_EXPORT:I NIGHTPRINT_PETG_E2E:I '*:S' > "$out/export-logcat.txt" || cp "$out/$stage-live-logcat.txt" "$out/export-logcat.txt"
-exit "$ui_result"
+if (( general_result != 0 )); then exit "$general_result"; fi
+if (( tpu_result != 0 )); then exit "$tpu_result"; fi
+touch "$out/ui-junit-passed"

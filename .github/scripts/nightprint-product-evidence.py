@@ -86,7 +86,7 @@ def main():
     exit_code = exit_file.read_text().strip() if exit_file.is_file() else None
     passed = exit_code == "0" and not errors
     result = "PASS" if passed else "FAIL" if exit_code not in (None, "0") else "UNVERIFIED"
-    if not (directory / "ui-junit-passed").is_file():
+    if not (directory / "ui-general-junit-passed").is_file():
         status = "UNVERIFIED"
     run_url = f"{os.getenv('GITHUB_SERVER_URL', 'https://github.com')}/{os.getenv('GITHUB_REPOSITORY')}/actions/runs/{os.getenv('GITHUB_RUN_ID')}"
     unknown = ["物理A1 miniでの印刷", "造形後の嵌合寸法", "外部受信アプリへのG-code共有"]
