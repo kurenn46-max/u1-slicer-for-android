@@ -113,7 +113,7 @@ jobs:
           avd-name: nightprint-ui
           ram-size: 4096M
           heap-size: 1024M
-          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -feature -Vulkan -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
           script: timeout -k 20s 10m bash .github/scripts/run-nightprint-android-e2e.sh ui
       - name: Verify combined native and UI evidence

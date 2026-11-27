@@ -39,6 +39,23 @@ connection_state() {
   [[ "$boot" == 1 ]]
 }
 
+sample_emulator_resources() {
+  date -u
+  ps -C qemu-system-x86,emulator,adb -o pid,stat,comm,rss || true
+  awk '/^(MemAvailable|SwapFree):/' /proc/meminfo
+  # Record cgroup counters while QEMU is still present, as well as after exit.
+  local qemu scope field
+  qemu=$(pgrep -x qemu-system-x86 | head -n 1 || true)
+  scope=$(awk -F: '$1 == "0" {print $3}' "/proc/${qemu:-$$}/cgroup" 2>/dev/null || true)
+  for field in memory.current memory.max memory.events; do
+    if [[ -n "$scope" && -r "/sys/fs/cgroup$scope/$field" ]]; then
+      printf '%s: ' "$field"
+      tr '\n' ' ' < "/sys/fs/cgroup$scope/$field"
+      printf '\n'
+    fi
+  done
+}
+
 collect_host_diagnostics() {
   {
     date -u
@@ -47,16 +64,27 @@ collect_host_diagnostics() {
     free -m || true
     df -h . || true
     ps -eo pid,stat,comm,rss | grep -E 'adb|emulator|qemu' || true
-    timeout -k 2s 5s sudo -n dmesg --level=err,warn | grep -Ei 'qemu|emulator|oom|out of memory|segfault' | tail -40 || true
+    local kernel
+    if kernel=$(timeout -k 2s 5s sudo -n dmesg --level=err,warn 2>&1); then
+      grep -Ei 'qemu|emulator|oom|out of memory|segfault' <<< "$kernel" | tail -40 || true
+    else
+      printf 'Host kernel diagnostics unavailable: %s\n' "$kernel"
+    fi
   } 2>&1
 }
 
 log_pid=
+sample_pid=
 finish() {
   local code=$?
   trap - EXIT
   if [[ -n "$log_pid" ]]; then
     kill "$log_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$sample_pid" ]]; then
+    kill "$sample_pid" 2>/dev/null || true
+    wait "$sample_pid" 2>/dev/null || true
+    sample_emulator_resources >> "$out/$stage-host-samples.txt" 2>&1 || true
   fi
   collect_host_diagnostics > "$out/$stage-host-final.txt"
   echo "$code" > "$out/$stage-runner-exit-code.txt"
@@ -78,9 +106,18 @@ device shell getprop ro.dalvik.vm.native.bridge >> "$out/$stage-device-abi.txt"
 
 device logcat -c
 # Stream before the tests so evidence already emitted survives a disconnect.
-timeout -k 2s 20m adb -s "$serial" logcat -v brief -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I \
-  NIGHTPRINT_EXPORT:I NIGHTPRINT_PETG_E2E:I NIGHTPRINT_QUALITY:I NIGHTPRINT_PETG_SETTINGS:I AndroidRuntime:E ActivityManager:E '*:S' > "$out/$stage-live-logcat.txt" 2>&1 &
+timeout -k 2s 20m adb -s "$serial" logcat -b main -b system -b crash -v brief -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I \
+  NIGHTPRINT_EXPORT:I NIGHTPRINT_PETG_E2E:I NIGHTPRINT_QUALITY:I NIGHTPRINT_PETG_SETTINGS:I AndroidRuntime:E ActivityManager:E libc:F DEBUG:F tombstoned:I '*:S' > "$out/$stage-live-logcat.txt" 2>&1 &
 log_pid=$!
+if [[ "$stage" == ui ]]; then
+  (
+    while true; do
+      sample_emulator_resources
+      sleep 5
+    done
+  ) > "$out/$stage-host-samples.txt" 2>&1 &
+  sample_pid=$!
+fi
 
 run_suite() {
   local suite="$1" class="$2" expected="$3" result=0
