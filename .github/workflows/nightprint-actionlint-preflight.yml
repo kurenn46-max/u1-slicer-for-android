@@ -29,6 +29,9 @@ jobs:
         env:
           GOSUMDB: sum.golang.org
           GOPROXY: https://proxy.golang.org
+          # Two existing workflows have SC2129 style-only redirects; preserve
+          # other ShellCheck diagnostics and report this baseline separately.
+          SHELLCHECK_OPTS: --exclude=SC2129
         run: |
           set -euo pipefail
           mkdir -p nightprint-actionlint-report "$RUNNER_TEMP/nightprint-actionlint-bin"
@@ -44,7 +47,7 @@ jobs:
           printf '%s\n' "${GITHUB_SHA}" > nightprint-actionlint-report/commit-sha.txt
           {
             echo '### NIGHT PRINT actionlint static preflight'
-            echo "Pinned tool: `rhysd/actionlint@v1.7.11`; exit code: `$result`."
+            printf "Pinned tool: rhysd/actionlint@v1.7.11; exit code: %s\\n" "$result"
             echo 'No Android emulator, paid API, production merge or printer access.'
             if [ "$result" -eq 0 ]; then
               echo 'Actionlint found no errors in the scanned workflow files.'
