@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Your One Slicer</string>
+    <string name="night_print_petg_startup_hold">PETGの印刷を保留しました。\n\n生成したG-codeには、印刷設定の%2$d℃より高い%1$d℃の開始温度指令が含まれます。対象の材料とプリンターで開始時の昇温・復帰を確認できていないため、印刷用ファイルは保存・共有できません。</string>
+    <string name="night_print_gcode_hold">G-codeの安全確認に通らなかったため、印刷を保留しました。材料・プリンター・温度設定を確認してください。詳しい理由は診断情報に記録しました。</string>
 </resources>

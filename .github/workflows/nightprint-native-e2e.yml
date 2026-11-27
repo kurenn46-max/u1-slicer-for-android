@@ -101,7 +101,24 @@ jobs:
           heap-size: 1024M
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
-          script: timeout -k 20s 19m bash .github/scripts/run-nightprint-android-e2e.sh
+          script: timeout -k 20s 10m bash .github/scripts/run-nightprint-android-e2e.sh native
+      - name: Android UI instrumentation on a fresh emulator (API 36, ARM translation)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          emulator-boot-timeout: 180
+          api-level: 36
+          arch: x86_64
+          target: google_apis
+          profile: pixel_5
+          avd-name: nightprint-ui
+          ram-size: 4096M
+          heap-size: 1024M
+          emulator-options: -no-snapshot -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none -camera-front none
+          disable-animations: true
+          script: timeout -k 20s 10m bash .github/scripts/run-nightprint-android-e2e.sh ui
+      - name: Verify combined native and UI evidence
+        if: ${{ !cancelled() }}
+        run: bash .github/scripts/run-nightprint-android-e2e.sh verify
       - name: Verify and stage the exact APK used by instrumentation
         run: |
           set -euo pipefail
@@ -122,6 +139,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: verified-apk/
+      - name: Record Japanese product diagnostics and handoff JSON
+        if: always()
+        env:
+          NIGHTPRINT_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python3 .github/scripts/nightprint-product-evidence.py nightprint-e2e-ci --summary | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Upload native instrumentation results (including failed runs)
         if: always()
         uses: actions/upload-artifact@v4

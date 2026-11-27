@@ -6587,11 +6587,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                         if (!audit.passed) {
                             diagnostics.clearSliceInProgress()
-                            _state.value = SlicerState.Error(
-                                "NIGHT PRINT safety check blocked this G-code.\n\n" +
-                                    audit.errors.joinToString("\n") +
-                                    "\n\nReview material mapping; do not print this file."
-                            )
+                            val message = if (audit.petgStartupUnqualified) {
+                                context.getString(
+                                    R.string.night_print_petg_startup_hold,
+                                    checkNotNull(audit.startupNozzlePeakC),
+                                    expected.nozzleC
+                                )
+                            } else {
+                                context.getString(R.string.night_print_gcode_hold)
+                            }
+                            _state.value = SlicerState.Error(message)
                             return@launch
                         }
                         // A successful heater/material audit is not enough: every
