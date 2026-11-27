@@ -2,11 +2,31 @@
 set -euo pipefail
 
 out=nightprint-e2e-ci
+stage="${1:-}"
+mkdir -p "$out"
+
+if [[ "$stage" == verify ]]; then
+  trap 'echo $? > "$out/exit-code.txt"' EXIT
+  for suite in native ui; do
+    if [[ ! -f "$out/$suite-junit-passed" || ! -f "$out/$suite-runner-exit-code.txt" ]] ||
+        ! grep -Fxq 0 "$out/$suite-runner-exit-code.txt"; then
+      echo "Missing or failed Android stage: $suite" >&2
+      exit 1
+    fi
+  done
+  grep -E 'save_bytes=[1-9][0-9]* share_bytes=[1-9][0-9]*' "$out/export-logcat.txt"
+  python3 .github/scripts/nightprint-product-evidence.py "$out" --verify
+  exit 0
+fi
+if [[ "$stage" != native && "$stage" != ui ]]; then
+  echo "Usage: $0 native|ui|verify" >&2
+  exit 2
+fi
+
 package=com.u1.slicer.orca.genesis.qa4
 reports="/sdcard/Android/data/$package/files"
 serial="${ANDROID_SERIAL:-emulator-5554}"
 export ANDROID_SERIAL="$serial"
-mkdir -p "$out"
 cp native-candidate/source.txt native-candidate/candidate.sha256 "$out/"
 
 device() { timeout -k 2s 8s adb -s "$serial" "$@"; }
@@ -38,28 +58,28 @@ finish() {
   if [[ -n "$log_pid" ]]; then
     kill "$log_pid" 2>/dev/null || true
   fi
-  collect_host_diagnostics > "$out/host-final.txt"
-  echo "$code" > "$out/exit-code.txt"
+  collect_host_diagnostics > "$out/$stage-host-final.txt"
+  echo "$code" > "$out/$stage-runner-exit-code.txt"
   exit "$code"
 }
 trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-collect_host_diagnostics > "$out/host-initial.txt"
+collect_host_diagnostics > "$out/$stage-host-initial.txt"
 if ! connection_state; then
   echo "ADB target $serial is not booted and online" >&2
   exit 69
 fi
-device shell getprop ro.build.version.sdk | tee "$out/device-api.txt"
-grep -Fxq 36 "$out/device-api.txt"
-device shell getprop ro.product.cpu.abilist > "$out/device-abi.txt"
-device shell getprop ro.dalvik.vm.native.bridge >> "$out/device-abi.txt"
+device shell getprop ro.build.version.sdk | tee "$out/$stage-device-api.txt"
+grep -Fxq 36 "$out/$stage-device-api.txt"
+device shell getprop ro.product.cpu.abilist > "$out/$stage-device-abi.txt"
+device shell getprop ro.dalvik.vm.native.bridge >> "$out/$stage-device-abi.txt"
 
 device logcat -c
 # Stream before the tests so evidence already emitted survives a disconnect.
 timeout -k 2s 20m adb -s "$serial" logcat -v brief -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I \
-  NIGHTPRINT_EXPORT:I NIGHTPRINT_PETG_E2E:I NIGHTPRINT_QUALITY:I NIGHTPRINT_PETG_SETTINGS:I AndroidRuntime:E ActivityManager:E '*:S' > "$out/live-logcat.txt" 2>&1 &
+  NIGHTPRINT_EXPORT:I NIGHTPRINT_PETG_E2E:I NIGHTPRINT_QUALITY:I NIGHTPRINT_PETG_SETTINGS:I AndroidRuntime:E ActivityManager:E '*:S' > "$out/$stage-live-logcat.txt" 2>&1 &
 log_pid=$!
 
 run_suite() {
@@ -116,25 +136,23 @@ PY
   touch "$out/$suite-junit-passed"
 }
 
-native_result=0
-run_suite native com.u1.slicer.slicing.NightPrintNativeE2ETest,com.u1.slicer.slicing.NightPrintQualityE2ETest 2,3 || native_result=$?
-if connection_state; then
-  device logcat -d -v brief -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I NIGHTPRINT_QUALITY:I NIGHTPRINT_PETG_SETTINGS:I AndroidRuntime:E '*:S' \
-    > "$out/native-android-logcat.txt" || cp "$out/live-logcat.txt" "$out/native-android-logcat.txt"
-  device pull "$reports/nightprint-native-e2e-report.json" "$out/raw-stl-native-evidence.json" || true
-  device pull "$reports/nightprint-3mf-profile-e2e-report.json" "$out/embedded-3mf-native-evidence.json" || true
-else
-  cp "$out/live-logcat.txt" "$out/native-android-logcat.txt"
+if [[ "$stage" == native ]]; then
+  native_result=0
+  run_suite native com.u1.slicer.slicing.NightPrintNativeE2ETest,com.u1.slicer.slicing.NightPrintQualityE2ETest 2,3 || native_result=$?
+  if connection_state; then
+    device logcat -d -v brief -s NIGHTPRINT_E2E:I NIGHTPRINT_3MF_E2E:I NIGHTPRINT_QUALITY:I NIGHTPRINT_PETG_SETTINGS:I AndroidRuntime:E '*:S' \
+      > "$out/native-android-logcat.txt" || cp "$out/$stage-live-logcat.txt" "$out/native-android-logcat.txt"
+    device pull "$reports/nightprint-native-e2e-report.json" "$out/raw-stl-native-evidence.json" || true
+    device pull "$reports/nightprint-3mf-profile-e2e-report.json" "$out/embedded-3mf-native-evidence.json" || true
+  else
+    cp "$out/$stage-live-logcat.txt" "$out/native-android-logcat.txt"
+  fi
+  if (( native_result != 0 )); then exit "$native_result"; fi
+  python3 tools/nightcore/verify_native_evidence.py "$out"
+  exit 0
 fi
-audit_result=0
-python3 tools/nightcore/verify_native_evidence.py "$out" || audit_result=$?
+
 ui_result=0
 run_suite ui com.u1.slicer.ui.NightPrintAndroid16UiTest 8 || ui_result=$?
-device logcat -d -v brief -s NIGHTPRINT_EXPORT:I NIGHTPRINT_PETG_E2E:I '*:S' > "$out/export-logcat.txt" || cp "$out/live-logcat.txt" "$out/export-logcat.txt"
-if (( native_result != 0 )); then exit "$native_result"; fi
-if (( audit_result != 0 )); then exit "$audit_result"; fi
-if (( ui_result != 0 )); then exit "$ui_result"; fi
-grep -E 'save_bytes=[1-9][0-9]* share_bytes=[1-9][0-9]*' "$out/export-logcat.txt"
-
-# A passing test may still mean PETG was safely HELD rather than printable.
-python3 .github/scripts/nightprint-product-evidence.py "$out" --verify
+device logcat -d -v brief -s NIGHTPRINT_EXPORT:I NIGHTPRINT_PETG_E2E:I '*:S' > "$out/export-logcat.txt" || cp "$out/$stage-live-logcat.txt" "$out/export-logcat.txt"
+exit "$ui_result"
